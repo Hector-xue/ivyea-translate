@@ -3,27 +3,39 @@ from __future__ import annotations
 
 from pathlib import Path
 
-# ---- 设计令牌 ----
+# ---- 设计令牌（取自品牌 logo 的叶绿色系） ----
 BG_GRADIENT = (
     "qlineargradient(x1:0, y1:0, x2:1, y2:1, "
-    "stop:0 #E9E4F5, stop:0.45 #FDF1E7, stop:1 #E3EDF9)"
+    "stop:0 #E9F4DF, stop:0.45 #FAFDF5, stop:1 #DEEFD2)"
 )
 GLASS_CARD = "rgba(255, 255, 255, 0.62)"
 GLASS_BORDER = "rgba(255, 255, 255, 0.85)"
-POPUP_BG = "rgba(255, 255, 255, 0.94)"
-ACCENT = "#F4845F"          # 珊瑚
-ACCENT_HOVER = "#EF7248"
-ACCENT_SOFT = "rgba(244, 132, 95, 0.14)"
-TEXT_PRIMARY = "#4A4A68"    # 深薰衣草灰
-TEXT_SECONDARY = "#9A9AB5"
+POPUP_BG = "rgba(255, 255, 255, 0.96)"
+ACCENT = "#6BA53F"          # logo 主绿
+ACCENT_HOVER = "#5B9334"
+ACCENT_SOFT = "rgba(107, 165, 63, 0.14)"
+TEXT_PRIMARY = "#3C4A34"    # 深叶绿灰
+TEXT_SECONDARY = "#93A388"
 RADIUS = 18
 RADIUS_SM = 12
+
+
+def asset_path(name: str) -> str:
+    """资源文件路径，兼容 PyInstaller 冻结环境（_MEIPASS）。"""
+    import sys
+
+    if getattr(sys, "frozen", False):
+        base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    else:
+        base = Path(__file__).resolve().parent.parent.parent
+    p = base / "assets" / name
+    return str(p) if p.exists() else ""
 
 FONT_FAMILY = '"Microsoft YaHei UI", "PingFang SC", "Noto Sans CJK SC", "Segoe UI", sans-serif'
 
 _ARROW_SVG = (
     '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="6" viewBox="0 0 10 6">'
-    '<path d="M1 1 L5 5 L9 1" fill="none" stroke="#9A9AB5" stroke-width="1.6" '
+    '<path d="M1 1 L5 5 L9 1" fill="none" stroke="#93A388" stroke-width="1.6" '
     'stroke-linecap="round" stroke-linejoin="round"/></svg>'
 )
 

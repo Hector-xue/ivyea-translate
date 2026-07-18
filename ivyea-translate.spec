@@ -5,8 +5,8 @@
 import sys
 from PyInstaller.utils.hooks import collect_data_files
 
-# RapidOCR 的 onnx 模型和配置文件必须随包分发
-datas = collect_data_files("rapidocr_onnxruntime")
+# RapidOCR 的 onnx 模型和配置文件必须随包分发；assets 是品牌 logo/图标
+datas = collect_data_files("rapidocr_onnxruntime") + [("assets", "assets")]
 
 a = Analysis(
     ["launcher.py"],

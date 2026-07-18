@@ -68,8 +68,16 @@ class MainWindow(QMainWindow):
 
         # 顶栏
         head = QHBoxLayout()
-        dot = QLabel("●")
-        dot.setStyleSheet(f"color: {theme.ACCENT}; font-size: 16px;")
+        dot = QLabel()
+        logo = theme.asset_path("logo.png")
+        if logo:
+            from PySide6.QtGui import QPixmap
+
+            dot.setPixmap(QPixmap(logo).scaled(
+                26, 26, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        else:
+            dot.setText("●")
+            dot.setStyleSheet(f"color: {theme.ACCENT}; font-size: 16px;")
         title = QLabel("Ivyea Translate · 随手即译")
         f = QFont()
         f.setPointSize(13)
@@ -405,6 +413,9 @@ class MainWindow(QMainWindow):
         self.watch_check = QCheckBox("开启复制翻译（复制任意文本后自动弹窗翻译）")
         self.watch_check.setChecked(bool(self.cfg.get("clipboard_watch.enabled", False)))
         hk_form.addRow("", self.watch_check)
+        self.bubble_check = QCheckBox("开启划词气泡（选中文字后光标旁出现图标，点击即翻译）")
+        self.bubble_check.setChecked(bool(self.cfg.get("selection_bubble.enabled", True)))
+        hk_form.addRow("", self.bubble_check)
         hc.addLayout(hk_form)
         lay.addWidget(hk_card)
 
@@ -467,6 +478,7 @@ class MainWindow(QMainWindow):
         self.cfg.set("hotkeys.screenshot_translate", self.hk_shot_edit.text().strip())
         self.cfg.set("hotkeys.show_main_window", self.hk_main_edit.text().strip())
         self.cfg.set("clipboard_watch.enabled", self.watch_check.isChecked())
+        self.cfg.set("selection_bubble.enabled", self.bubble_check.isChecked())
         self.cfg.save()
         self.save_status.setText("已保存 ✓")
         from PySide6.QtCore import QTimer

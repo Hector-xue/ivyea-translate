@@ -3,7 +3,7 @@
 # 说明：单文件版首次启动会解压到临时目录，比文件夹版慢几秒；体积约 200MB+
 from PyInstaller.utils.hooks import collect_data_files
 
-datas = collect_data_files("rapidocr_onnxruntime")
+datas = collect_data_files("rapidocr_onnxruntime") + [("assets", "assets")]
 
 a = Analysis(
     ["launcher.py"],

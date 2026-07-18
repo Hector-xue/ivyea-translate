@@ -96,8 +96,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "enabled": False,
         "max_chars": 3000,
     },
+    "selection_bubble": {
+        # 划词后光标旁弹出小图标，点击即翻译（仅 Windows）
+        "enabled": True,
+    },
     "ui": {
-        "popup_width": 420,
+        "popup_width": 520,
         "history_limit": 100,
     },
 }
@@ -135,9 +139,17 @@ class Config:
                         user_data = json.load(f)
                     if isinstance(user_data, dict):
                         self._data = _deep_merge(DEFAULT_CONFIG, user_data)
+                        self._migrate()
                 except (json.JSONDecodeError, OSError):
                     # 配置损坏时不覆盖用户文件，用默认值继续跑
                     self._data = deepcopy(DEFAULT_CONFIG)
+
+    def _migrate(self) -> None:
+        """老配置的默认值升级（用户自定义过的值不动）。"""
+        ui = self._data.get("ui", {})
+        # v0.1.x 默认弹窗宽 420 偏小；等于旧默认值视为未自定义，升到新默认
+        if ui.get("popup_width") == 420:
+            ui["popup_width"] = DEFAULT_CONFIG["ui"]["popup_width"]
 
     def save(self) -> None:
         with self._lock:

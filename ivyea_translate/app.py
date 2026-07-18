@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from . import selection
 from .clipboard_watch import ClipboardWatcher
+from .selection_bubble import SelectionBubble, SelectionWatcher
 from .config import CONFIG_DIR, Config
 from .hotkeys import HotkeyManager
 from .llm import LLMError, client_from_config
@@ -26,7 +27,10 @@ from .ui.popup import TranslationPopup
 
 
 def _make_icon() -> QIcon:
-    """程序化画一个珊瑚圆点图标（托盘/窗口用）。"""
+    """品牌 logo 图标；资源缺失时退化为程序画的绿色圆点。"""
+    logo = theme.asset_path("logo.png")
+    if logo:
+        return QIcon(logo)
     pm = QPixmap(64, 64)
     pm.fill(Qt.transparent)
     p = QPainter(pm)
@@ -103,6 +107,15 @@ class TranslateApp(QApplication):
         self._workers: List[TranslateWorker] = []
         self._overlay: Optional[CaptureOverlay] = None
 
+        # 划词气泡（DeepL 式）：划选/双击后光标旁出图标，点击即翻译
+        self.bubble = SelectionBubble()
+        self.bubble.clicked.connect(self.trigger_select_translate)
+        self.sel_watcher = SelectionWatcher()
+        self.sel_watcher.bubble_request.connect(self._on_bubble_request)
+        self.sel_watcher.set_enabled(
+            self.sel_watcher.available and bool(self.cfg.get("selection_bubble.enabled", True))
+        )
+
         self._setup_tray()
         ocr_engine.warmup_async()
 
@@ -151,6 +164,9 @@ class TranslateApp(QApplication):
         self.watcher.set_enabled(enabled)
         if self.tray:
             self.act_watch.setChecked(enabled)
+        self.sel_watcher.set_enabled(
+            self.sel_watcher.available and bool(self.cfg.get("selection_bubble.enabled", True))
+        )
 
     def _toggle_watch(self, on: bool) -> None:
         self.watcher.set_enabled(on)
@@ -165,7 +181,11 @@ class TranslateApp(QApplication):
 
     def trigger_select_translate(self) -> None:
         def work():
-            text = selection.get_selected_text(pause_watch=self._pause_watch_threadsafe)
+            try:
+                text = selection.get_selected_text(pause_watch=self._pause_watch_threadsafe)
+            except Exception:
+                log.exception("取词流程异常")
+                text = None
             if text:
                 self.bridge.selected_text_ready.emit(text)
             else:
@@ -177,6 +197,18 @@ class TranslateApp(QApplication):
         # 只改标志位，线程安全足够
         self.watcher._paused = paused
 
+    def _on_bubble_request(self, x: int, y: int) -> None:
+        """划词手势 -> 弹小气泡。在自家窗口上划选/截图框选中不弹。"""
+        if self._overlay is not None:
+            return
+        from PySide6.QtCore import QPoint
+
+        pt = QPoint(x, y)
+        for w in [self.window, self.bubble, *self._popups]:
+            if w is not None and w.isVisible() and w.frameGeometry().contains(pt):
+                return
+        self.bubble.pop_at(x, y)
+
     def _notify_no_selection(self) -> None:
         if self.tray:
             self.tray.showMessage("Ivyea Translate", "没有取到选中文字", QSystemTrayIcon.Information, 1500)
@@ -185,7 +217,7 @@ class TranslateApp(QApplication):
 
     def _popup_translate_at_cursor(self, text: str) -> None:
         popup = TranslationPopup(original=text, show_original=False,
-                                 width=int(self.cfg.get("ui.popup_width", 420)))
+                                 width=int(self.cfg.get("ui.popup_width", 520)))
         self._track_popup(popup)
         popup.show_at_cursor()
         self._start_translate(popup, text)
@@ -240,6 +272,15 @@ class TranslateApp(QApplication):
 
     def _on_region_selected(self, rect: QRect, pixmap: QPixmap) -> None:
         self._clear_overlay()
+        # 弹窗立即出现（"识别中"状态），OCR 在后台跑完再回填——消除框选后的静默等待
+        popup = TranslationPopup(original="", show_original=True,
+                                 width=int(self.cfg.get("ui.popup_width", 520)))
+        popup.set_status("正在识别文字…")
+        self._track_popup(popup)
+        popup.show_near(rect)
+        self._shot_popup = popup
+        popup.destroyed.connect(lambda: setattr(self, "_shot_popup", None))
+
         import tempfile
 
         tmp = tempfile.NamedTemporaryFile(
@@ -250,17 +291,17 @@ class TranslateApp(QApplication):
         OcrThread(self.bridge, tmp.name, rect).start()
 
     def _on_ocr_ready(self, text: str, anchor: QRect) -> None:
-        popup = TranslationPopup(original=text, show_original=True,
-                                 width=int(self.cfg.get("ui.popup_width", 420)))
-        self._track_popup(popup)
-        popup.show_near(anchor)
+        popup = getattr(self, "_shot_popup", None)
+        if popup is None:  # 用户已把"识别中"弹窗关了，不再打扰
+            return
+        popup.set_original(text)
+        popup.set_status("翻译中…")
         self._start_translate(popup, text)
 
     def _on_ocr_failed(self, message: str, anchor: QRect) -> None:
-        popup = TranslationPopup(original="", show_original=False,
-                                 width=int(self.cfg.get("ui.popup_width", 420)))
-        self._track_popup(popup)
-        popup.show_near(anchor)
+        popup = getattr(self, "_shot_popup", None)
+        if popup is None:
+            return
         popup.set_failed(f"识别失败：{message}")
 
     # ---------- 退出 ----------
@@ -269,6 +310,7 @@ class TranslateApp(QApplication):
         """唯一正确的退出入口：先放行主窗口的 close，再 quit。"""
         self.window.really_quit = True
         self.hotkeys.stop()
+        self.sel_watcher.stop()
         self.quit()
 
     # ---------- 主窗口 ----------

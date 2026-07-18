@@ -1,12 +1,15 @@
-"""翻译结果弹窗：无边框、置顶、可拖动、流式刷新、智能定位。
+"""翻译结果弹窗：无边框、置顶、可拖动、可调大小、流式刷新、智能定位。
 
 compute_popup_pos 是纯函数（可单测）：给定弹窗尺寸、锚区域（不可覆盖）、屏幕可用区，
 返回弹窗左上角坐标。优先锚区正下方，放不下依次尝试上方、右侧、左侧，
 都放不下则夹回屏幕内（此时允许重叠，属极端情况）。
+
+截图翻译两段式：先秒出"正在识别文字…"弹窗（set_status），OCR 完成后
+set_original 回填原文并开始翻译，消除等待黑箱感。
 """
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Optional, Tuple
 
 from PySide6.QtCore import QPoint, QRect, Qt, QTimer
 from PySide6.QtGui import QGuiApplication, QTextOption
@@ -18,6 +21,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QPlainTextEdit,
     QPushButton,
+    QSizeGrip,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -25,6 +30,8 @@ from PySide6.QtWidgets import (
 from . import theme
 
 Rect = Tuple[int, int, int, int]  # x, y, w, h
+
+MAX_SIZE = 16777215
 
 
 def _clamp(v: int, lo: int, hi: int) -> int:
@@ -62,27 +69,51 @@ def compute_popup_pos(popup_w: int, popup_h: int, anchor: Rect, screen: Rect, ma
 
 
 class _AutoGrowText(QPlainTextEdit):
-    """只读文本区，随内容自动长高，超过 max_h 出滚动条。"""
+    """只读文本区，随内容自动长高，超过 max_h 出滚动条；
+    用户手动调整弹窗大小后切换为自由伸展（set_free）。"""
 
-    def __init__(self, max_h: int = 260, parent=None):
+    def __init__(self, max_h: int = 460, parent=None):
         super().__init__(parent)
         self.setReadOnly(True)
         self.setFrameStyle(QFrame.NoFrame)
         self.setWordWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self._max_h = max_h
+        self._free = False
         self.textChanged.connect(self._adjust_height)
         self._adjust_height()
 
+    def set_free(self) -> None:
+        self._free = True
+        self.setMinimumHeight(48)
+        self.setMaximumHeight(MAX_SIZE)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
     def _adjust_height(self):
+        if self._free:
+            return
         doc_h = int(self.document().size().height()) + 16
-        self.setFixedHeight(max(40, min(doc_h, self._max_h)))
+        self.setFixedHeight(max(44, min(doc_h, self._max_h)))
+
+
+class _Grip(QSizeGrip):
+    """右下角调整大小手柄：第一次拖动时把弹窗切到自由尺寸模式。"""
+
+    def __init__(self, popup: "TranslationPopup", parent=None):
+        super().__init__(parent)
+        self._popup = popup
+        self.setFixedSize(16, 16)
+        self.setStyleSheet("background: transparent;")
+
+    def mousePressEvent(self, event):
+        self._popup.enter_manual_size()
+        super().mousePressEvent(event)
 
 
 class TranslationPopup(QWidget):
     """一次翻译一个弹窗实例；关闭即销毁。支持钉住（失焦不关）。"""
 
-    def __init__(self, original: str = "", show_original: bool = False, width: int = 420):
+    def __init__(self, original: str = "", show_original: bool = False, width: int = 520):
         super().__init__(None)
         self.setWindowFlags(
             Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint
@@ -91,7 +122,8 @@ class TranslationPopup(QWidget):
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self._pinned = False
-        self._drag_offset: QPoint | None = None
+        self._manual_size = False
+        self._drag_offset: Optional[QPoint] = None
         self._popup_width = width
 
         card = QWidget(self)
@@ -107,7 +139,7 @@ class TranslationPopup(QWidget):
                 background: transparent;
                 border: none;
                 padding: 0;
-                font-size: 14px;
+                font-size: 15px;
             }}
             """
         )
@@ -122,7 +154,7 @@ class TranslationPopup(QWidget):
         outer.addWidget(card)
 
         lay = QVBoxLayout(card)
-        lay.setContentsMargins(16, 10, 16, 14)
+        lay.setContentsMargins(18, 12, 18, 8)
         lay.setSpacing(8)
 
         # 标题行：状态 + 钉住 + 复制 + 关闭（整行也是拖动把手）
@@ -148,30 +180,59 @@ class TranslationPopup(QWidget):
         head.addWidget(close_btn)
         lay.addLayout(head)
 
-        # 原文区（截图翻译展示 OCR 结果，可折叠）
+        # 原文区（截图翻译展示 OCR 结果，可折叠；可先建后填 set_original）
         self.original_text = original
-        self._orig_view: _AutoGrowText | None = None
-        if show_original and original:
+        self._orig_view: Optional[_AutoGrowText] = None
+        self._orig_toggle: Optional[QPushButton] = None
+        self._divider: Optional[QFrame] = None
+        if show_original:
             self._orig_toggle = QPushButton("原文 ▾")
             self._orig_toggle.setObjectName("Ghost")
             self._orig_toggle.setStyleSheet("text-align: left; font-size: 12px;")
             self._orig_toggle.clicked.connect(self._toggle_original)
             lay.addWidget(self._orig_toggle)
-            self._orig_view = _AutoGrowText(max_h=140)
-            self._orig_view.setPlainText(original)
+            self._orig_view = _AutoGrowText(max_h=200)
             self._orig_view.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 13px;")
             lay.addWidget(self._orig_view)
-            divider = QFrame()
-            divider.setFrameShape(QFrame.HLine)
-            divider.setStyleSheet("background: rgba(154,154,181,0.25); max-height: 1px; border: none;")
-            lay.addWidget(divider)
+            self._divider = QFrame()
+            self._divider.setFrameShape(QFrame.HLine)
+            self._divider.setStyleSheet("background: rgba(147,163,136,0.3); max-height: 1px; border: none;")
+            lay.addWidget(self._divider)
+            if original:
+                self._orig_view.setPlainText(original)
+            else:
+                self._set_original_visible(False)
 
         # 译文区（流式）
-        self.result_view = _AutoGrowText(max_h=320)
-        lay.addWidget(self.result_view)
+        self.result_view = _AutoGrowText(max_h=460)
+        lay.addWidget(self.result_view, 1)
+
+        # 右下角调整大小手柄
+        grip_row = QHBoxLayout()
+        grip_row.setContentsMargins(0, 0, 0, 0)
+        grip_row.addStretch(1)
+        grip_row.addWidget(_Grip(self, card))
+        lay.addLayout(grip_row)
 
         self.setFixedWidth(width)
         self._result_parts: list = []
+
+    # ---- 两段式（截图翻译）：先"识别中"，OCR 完成后回填原文 ----
+
+    def set_status(self, text: str) -> None:
+        self.status_label.setText(text)
+
+    def set_original(self, text: str) -> None:
+        self.original_text = text
+        if self._orig_view is not None:
+            self._orig_view.setPlainText(text)
+            self._set_original_visible(True)
+        self._relayout()
+
+    def _set_original_visible(self, visible: bool) -> None:
+        for w in (self._orig_toggle, self._orig_view, self._divider):
+            if w is not None:
+                w.setVisible(visible)
 
     # ---- 流式接口（连接 TranslateWorker 信号） ----
 
@@ -180,19 +241,35 @@ class TranslationPopup(QWidget):
         self.result_view.setPlainText("".join(self._result_parts))
         sb = self.result_view.verticalScrollBar()
         sb.setValue(sb.maximum())
-        self.adjustSize()
+        self._relayout()
 
     def set_done(self, full_text: str) -> None:
         self.result_view.setPlainText(full_text)
         self._result_parts = [full_text]
         self.status_label.setText("已翻译")
-        self.adjustSize()
+        self._relayout()
 
     def set_failed(self, message: str) -> None:
         self.status_label.setText("失败")
         self.result_view.setPlainText(message)
         self.result_view.setStyleSheet(f"color: {theme.ACCENT};")
-        self.adjustSize()
+        self._relayout()
+
+    def _relayout(self) -> None:
+        if not self._manual_size:
+            self.adjustSize()
+
+    # ---- 手动调整大小 ----
+
+    def enter_manual_size(self) -> None:
+        if self._manual_size:
+            return
+        self._manual_size = True
+        self.setMinimumSize(360, 220)
+        self.setMaximumSize(MAX_SIZE, MAX_SIZE)
+        self.result_view.set_free()
+        if self._orig_view is not None:
+            self._orig_view.set_free()
 
     # ---- 定位 ----
 
@@ -232,8 +309,9 @@ class TranslationPopup(QWidget):
             return
         visible = self._orig_view.isVisible()
         self._orig_view.setVisible(not visible)
-        self._orig_toggle.setText("原文 ▸" if visible else "原文 ▾")
-        self.adjustSize()
+        if self._orig_toggle is not None:
+            self._orig_toggle.setText("原文 ▸" if visible else "原文 ▾")
+        self._relayout()
 
     def _copy_result(self) -> None:
         text = self.result_view.toPlainText()
