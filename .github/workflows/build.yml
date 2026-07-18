@@ -1,0 +1,52 @@
+name: CI & Windows Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install system libs for Qt offscreen
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libglib2.0-0
+      - name: Install deps (pynput without evdev on Linux)
+        run: |
+          pip install PySide6 httpx rapidocr-onnxruntime pytest
+          pip install --no-deps pynput
+          pip install six
+      - name: Run tests
+        run: QT_QPA_PLATFORM=offscreen python -m pytest tests/ -q
+
+  build-windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: pip install -r requirements.txt pyinstaller
+      - name: Build portable exe
+        run: pyinstaller --noconfirm ivyea-translate-portable.spec
+      - name: Smoke check artifact exists
+        shell: pwsh
+        run: |
+          if (!(Test-Path dist/IvyeaTranslate.exe)) { throw "exe not produced" }
+          Get-Item dist/IvyeaTranslate.exe | Format-List Name, Length
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IvyeaTranslate-portable-win64
+          path: dist/IvyeaTranslate.exe
+      - name: Attach to release on tag
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/IvyeaTranslate.exe
