@@ -30,11 +30,12 @@ python -m ivyea_translate
 ## 打包成 exe（在 Windows 机器上）
 
 ```bat
-pip install pyinstaller
-pyinstaller ivyea-translate.spec
+build.bat            :: 文件夹版（启动快）  -> dist\IvyeaTranslate\IvyeaTranslate.exe
+build.bat portable   :: 单文件便携版        -> dist\IvyeaTranslate.exe
 ```
 
-产物 `dist/IvyeaTranslate/IvyeaTranslate.exe`（RapidOCR 模型已随包收集）。
+两种都是**免安装绿色版**，双击即用（RapidOCR 模型已随包收集）。单文件版首次启动要解压临时目录，慢几秒。
+如需带安装向导/开始菜单快捷方式的 setup 安装包，可在文件夹版基础上用 Inno Setup 再包一层。
 
 ## 开发与测试
 
