@@ -6,6 +6,9 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+permissions:
+  contents: write  # tag 构建要创建 Release 并上传 exe
+
 jobs:
   test:
     runs-on: ubuntu-latest
