@@ -25,6 +25,6 @@ exe = EXE(
     a.datas,
     name="IvyeaTranslate",
     console=False,
-    icon=None,
+    icon="assets/icon.ico",
     upx=False,
 )

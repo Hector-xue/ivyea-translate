@@ -14,7 +14,19 @@
 
 快捷键都可在「设置」里改（pynput 语法，如 `<ctrl>+<alt>+t`）。
 
-## 安装运行（Windows，Python 3.9+）
+## 下载安装（推荐）
+
+到 [Releases](../../releases) 下载：
+
+- **IvyeaTranslate-Setup.exe** —— 安装版：向导安装、开始菜单+桌面快捷方式、可卸载（装到当前用户目录，无需管理员）
+- **IvyeaTranslate.exe** —— 单文件便携版：免安装双击即用，首次启动解压慢几秒
+
+注意：
+- 全局快捷键用系统原生 RegisterHotKey 注册，若与其他软件冲突，设置页「状态」会红字提示具体哪条失败，改个组合键保存即可
+- 对以管理员权限运行的窗口取词/热键无效（Windows 安全机制），需要的话以管理员身份运行本软件
+- 排查问题看日志：`%USERPROFILE%\.ivyea-translate\app.log`
+
+## 源码运行（Windows，Python 3.9+）
 
 ```bat
 git clone <repo> ivyea-translate
@@ -34,8 +46,8 @@ build.bat            :: 文件夹版（启动快）  -> dist\IvyeaTranslate\Ivye
 build.bat portable   :: 单文件便携版        -> dist\IvyeaTranslate.exe
 ```
 
-两种都是**免安装绿色版**，双击即用（RapidOCR 模型已随包收集）。单文件版首次启动要解压临时目录，慢几秒。
-如需带安装向导/开始菜单快捷方式的 setup 安装包，可在文件夹版基础上用 Inno Setup 再包一层。
+安装包：装 [Inno Setup 6](https://jrsoftware.org/isinfo.php) 后在文件夹版基础上 `iscc installer.iss` → `dist\IvyeaTranslate-Setup.exe`。
+CI 会在推 `v*` tag 时自动构建全部三种产物并挂到 Release。
 
 ## 开发与测试
 

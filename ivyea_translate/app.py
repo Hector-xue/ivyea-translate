@@ -1,9 +1,12 @@
 """应用装配：单实例、系统托盘、热键/剪贴板/截图三条链路接线。"""
 from __future__ import annotations
 
+import logging
 import sys
 import threading
 from typing import List, Optional
+
+log = logging.getLogger(__name__)
 
 from PySide6.QtCore import QLockFile, QObject, QRect, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
@@ -86,14 +89,15 @@ class TranslateApp(QApplication):
         self.watcher.set_enabled(bool(self.cfg.get("clipboard_watch.enabled", False)))
         self.watcher.text_copied.connect(self._popup_translate_at_cursor)
 
+        self.window = MainWindow(self.cfg)
+        self.window.settings_saved.connect(self._on_settings_saved)
+
+        # 热键注册放在窗口之后，注册结果直接显示到设置页
         self.hotkeys = HotkeyManager()
         self.hotkeys.select_translate.connect(self.trigger_select_translate)
         self.hotkeys.screenshot_translate.connect(self.trigger_screenshot_translate)
         self.hotkeys.show_main_window.connect(self.show_main_window)
         self._register_hotkeys()
-
-        self.window = MainWindow(self.cfg)
-        self.window.settings_saved.connect(self._on_settings_saved)
 
         self._popups: List[TranslationPopup] = []
         self._workers: List[TranslateWorker] = []
@@ -106,8 +110,9 @@ class TranslateApp(QApplication):
 
     def _register_hotkeys(self) -> None:
         ok = self.hotkeys.start(self.cfg.get("hotkeys", {}))
+        self.window.set_hotkey_status(None if ok else self.hotkeys.last_error)
         if not ok and self.hotkeys.last_error:
-            print(f"[ivyea-translate] {self.hotkeys.last_error}", file=sys.stderr)
+            log.warning("热键：%s", self.hotkeys.last_error)
 
     def _setup_tray(self) -> None:
         self.tray: Optional[QSystemTrayIcon] = None
@@ -274,9 +279,32 @@ class TranslateApp(QApplication):
         self.window.activateWindow()
 
 
+def _setup_logging() -> None:
+    """打包版无控制台，日志落 ~/.ivyea-translate/app.log 供排查。"""
+    try:
+        logging.basicConfig(
+            filename=str(CONFIG_DIR / "app.log"),
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+            encoding="utf-8",
+        )
+    except OSError:
+        logging.basicConfig(level=logging.INFO)
+
+    def excepthook(exc_type, exc, tb):
+        logging.getLogger("uncaught").error("未捕获异常", exc_info=(exc_type, exc, tb))
+        sys.__excepthook__(exc_type, exc, tb)
+
+    sys.excepthook = excepthook
+
+
 def main() -> int:
     # 单实例锁：第二个实例直接退出
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    _setup_logging()
+    from . import __version__
+
+    log.info("Ivyea Translate v%s 启动", __version__)
     lock = QLockFile(str(CONFIG_DIR / "app.lock"))
     lock.setStaleLockTime(0)
     if not lock.tryLock(100):

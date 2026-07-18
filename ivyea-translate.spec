@@ -27,7 +27,7 @@ exe = EXE(
     exclude_binaries=True,
     name="IvyeaTranslate",
     console=False,          # 无控制台窗口
-    icon=None,
+    icon="assets/icon.ico",
 )
 coll = COLLECT(
     exe,

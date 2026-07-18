@@ -40,6 +40,10 @@ def _glass_card() -> QWidget:
 
 class MainWindow(QMainWindow):
     settings_saved = Signal()
+    # 测试连接在后台线程跑，结果必须经信号回主线程；
+    # 之前用 QTimer.singleShot(0,...) 在非 Qt 线程启动定时器，回调永不执行，
+    # 界面会永远停在"测试中…"
+    _test_finished = Signal(str, bool)
 
     def __init__(self, cfg: Config):
         super().__init__()
@@ -53,6 +57,7 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("Ivyea Translate")
         self.resize(760, 640)
+        self._test_finished.connect(self._show_test_result)
 
         root = QWidget()
         root.setObjectName("Root")
@@ -393,6 +398,10 @@ class MainWindow(QMainWindow):
         hk_hint = QLabel('格式如 <ctrl>+<alt>+t（尖括号包修饰键）')
         hk_hint.setObjectName("Hint")
         hk_form.addRow("", hk_hint)
+        self.hotkey_status = QLabel("")
+        self.hotkey_status.setObjectName("Hint")
+        self.hotkey_status.setWordWrap(True)
+        hk_form.addRow("状态", self.hotkey_status)
         self.watch_check = QCheckBox("开启复制翻译（复制任意文本后自动弹窗翻译）")
         self.watch_check.setChecked(bool(self.cfg.get("clipboard_watch.enabled", False)))
         hk_form.addRow("", self.watch_check)
@@ -436,9 +445,7 @@ class MainWindow(QMainWindow):
                 msg, ok = str(e), False
             except Exception as e:
                 msg, ok = f"测试失败：{e}", False
-            from PySide6.QtCore import QTimer
-
-            QTimer.singleShot(0, lambda: self._show_test_result(msg, ok))
+            self._test_finished.emit(msg, ok)
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -466,6 +473,17 @@ class MainWindow(QMainWindow):
 
         QTimer.singleShot(2000, lambda: self.save_status.setText(""))
         self.settings_saved.emit()
+
+    def set_hotkey_status(self, error: Optional[str]) -> None:
+        """app 注册热键后回填状态；error=None 表示全部生效。"""
+        if not hasattr(self, "hotkey_status"):
+            return
+        if error:
+            self.hotkey_status.setStyleSheet(f"color: {theme.ACCENT};")
+            self.hotkey_status.setText(f"⚠ {error}")
+        else:
+            self.hotkey_status.setStyleSheet("color: #3AA675;")
+            self.hotkey_status.setText("全局快捷键已生效")
 
     # 关窗只是隐藏（常驻托盘）；退出流程中必须放行
     def closeEvent(self, event):

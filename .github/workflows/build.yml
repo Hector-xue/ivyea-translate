@@ -39,14 +39,23 @@ jobs:
         run: pip install -r requirements.txt pyinstaller
       - name: Build portable exe
         run: pyinstaller --noconfirm ivyea-translate-portable.spec
-      - name: Smoke check artifact
+      - name: Build folder app (for installer)
+        run: pyinstaller --noconfirm ivyea-translate.spec
+      - name: Build installer (Inno Setup)
         shell: pwsh
         run: |
-          if (!(Test-Path dist/IvyeaTranslate.exe)) { throw "exe not produced" }
-          $len = (Get-Item dist/IvyeaTranslate.exe).Length
-          Write-Host "exe size: $([math]::Round($len/1MB)) MB"
-          if ($len -lt 80MB) { throw "exe suspiciously small ($len bytes) - dependencies likely missing" }
-      - name: Smoke run exe (offscreen, must stay alive 30s)
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+          if (!(Test-Path dist/IvyeaTranslate-Setup.exe)) { throw "installer not produced" }
+      - name: Smoke check artifacts
+        shell: pwsh
+        run: |
+          foreach ($f in @("dist/IvyeaTranslate.exe", "dist/IvyeaTranslate-Setup.exe")) {
+            if (!(Test-Path $f)) { throw "$f not produced" }
+            $len = (Get-Item $f).Length
+            Write-Host "$f size: $([math]::Round($len/1MB)) MB"
+            if ($len -lt 80MB) { throw "$f suspiciously small ($len bytes) - dependencies likely missing" }
+          }
+      - name: Smoke run portable exe (offscreen, must stay alive 30s)
         shell: pwsh
         run: |
           $env:QT_QPA_PLATFORM = "offscreen"
@@ -56,12 +65,29 @@ jobs:
           if ($p.HasExited) { throw "exe exited early, code=$($p.ExitCode)" }
           Stop-Process -Id $p.Id -Force
           Write-Host "exe stayed alive 30s - smoke OK"
+      - name: Smoke install + run installed app
+        shell: pwsh
+        run: |
+          Start-Process -FilePath dist\IvyeaTranslate-Setup.exe -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -Wait
+          $exe = "$env:LOCALAPPDATA\Programs\IvyeaTranslate\IvyeaTranslate.exe"
+          if (!(Test-Path $exe)) { throw "installed exe not found at $exe" }
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $env:IVYEA_TRANSLATE_HOME = "$env:RUNNER_TEMP\ivyea-smoke2"
+          $p = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 20
+          if ($p.HasExited) { throw "installed exe exited early, code=$($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
+          Write-Host "installed app smoke OK"
       - uses: actions/upload-artifact@v4
         with:
-          name: IvyeaTranslate-portable-win64
-          path: dist/IvyeaTranslate.exe
+          name: IvyeaTranslate-win64
+          path: |
+            dist/IvyeaTranslate.exe
+            dist/IvyeaTranslate-Setup.exe
       - name: Attach to release on tag
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/IvyeaTranslate.exe
+          files: |
+            dist/IvyeaTranslate.exe
+            dist/IvyeaTranslate-Setup.exe
