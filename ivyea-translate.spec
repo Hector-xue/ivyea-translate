@@ -9,7 +9,7 @@ from PyInstaller.utils.hooks import collect_data_files
 datas = collect_data_files("rapidocr_onnxruntime")
 
 a = Analysis(
-    ["ivyea_translate/__main__.py"],
+    ["launcher.py"],
     pathex=["."],
     datas=datas,
     hiddenimports=[

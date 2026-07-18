@@ -36,11 +36,23 @@ jobs:
         run: pip install -r requirements.txt pyinstaller
       - name: Build portable exe
         run: pyinstaller --noconfirm ivyea-translate-portable.spec
-      - name: Smoke check artifact exists
+      - name: Smoke check artifact
         shell: pwsh
         run: |
           if (!(Test-Path dist/IvyeaTranslate.exe)) { throw "exe not produced" }
-          Get-Item dist/IvyeaTranslate.exe | Format-List Name, Length
+          $len = (Get-Item dist/IvyeaTranslate.exe).Length
+          Write-Host "exe size: $([math]::Round($len/1MB)) MB"
+          if ($len -lt 80MB) { throw "exe suspiciously small ($len bytes) - dependencies likely missing" }
+      - name: Smoke run exe (offscreen, must stay alive 30s)
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $env:IVYEA_TRANSLATE_HOME = "$env:RUNNER_TEMP\ivyea-smoke"
+          $p = Start-Process -FilePath dist\IvyeaTranslate.exe -PassThru
+          Start-Sleep -Seconds 30
+          if ($p.HasExited) { throw "exe exited early, code=$($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
+          Write-Host "exe stayed alive 30s - smoke OK"
       - uses: actions/upload-artifact@v4
         with:
           name: IvyeaTranslate-portable-win64
