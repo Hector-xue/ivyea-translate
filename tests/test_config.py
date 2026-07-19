@@ -7,7 +7,7 @@ def test_defaults_when_no_file(tmp_path):
     cfg = Config(tmp_path / "config.json")
     assert cfg.get("provider.preset") == "deepseek"
     assert cfg.get("translate.target_language") == "zh-CN"
-    assert cfg.get("hotkeys.select_translate") == "<ctrl>+<alt>+t"
+    assert cfg.get("hotkeys.select_translate") == "<ctrl>+<alt>+x"
 
 
 def test_save_load_roundtrip(tmp_path):

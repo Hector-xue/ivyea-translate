@@ -57,6 +57,7 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("Ivyea Translate")
         self.resize(760, 640)
+        self.setMinimumSize(520, 400)  # 允许自由缩小；设置页有滚动容器兜底
         self._test_finished.connect(self._show_test_result)
 
         root = QWidget()
@@ -140,7 +141,7 @@ class MainWindow(QMainWindow):
         card_lay.addWidget(self.source_edit)
 
         btn_row = QHBoxLayout()
-        hint = QLabel("划词翻译 {sel} · 截图翻译 {shot}".format(
+        hint = QLabel("划词翻译 {sel} 或连按两次 Ctrl+C · 截图翻译 {shot}".format(
             sel=self._pretty_hotkey(self.cfg.get("hotkeys.select_translate", "")),
             shot=self._pretty_hotkey(self.cfg.get("hotkeys.screenshot_translate", "")),
         ))
@@ -483,10 +484,18 @@ class MainWindow(QMainWindow):
     # ================= 设置页 =================
 
     def _build_settings_tab(self) -> QWidget:
+        # 外层滚动容器：窗口缩小/全屏拉伸时表单保持自然高度，不被压矮或抻高
+        from PySide6.QtWidgets import QScrollArea
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; } QScrollArea > QWidget > QWidget { background: transparent; }")
         page = QWidget()
         lay = QVBoxLayout(page)
-        lay.setContentsMargins(0, 12, 0, 0)
+        lay.setContentsMargins(0, 12, 8, 12)
         lay.setSpacing(12)
+        scroll.setWidget(page)
 
         # 模型卡
         model_card = _glass_card()
@@ -553,11 +562,18 @@ class MainWindow(QMainWindow):
         hk_form.addRow("划词翻译", self.hk_select_edit)
         self.hk_shot_edit = QLineEdit(self.cfg.get("hotkeys.screenshot_translate", ""))
         hk_form.addRow("截图翻译", self.hk_shot_edit)
-        self.hk_main_edit = QLineEdit(self.cfg.get("hotkeys.show_main_window", ""))
-        hk_form.addRow("呼出主窗口", self.hk_main_edit)
-        hk_hint = QLabel('格式如 <ctrl>+<alt>+t（尖括号包修饰键）')
+        hk_hint = QLabel('格式如 <ctrl>+<alt>+x（尖括号包修饰键）')
         hk_hint.setObjectName("Hint")
         hk_form.addRow("", hk_hint)
+        self.dblcopy_check = QCheckBox("连按两次 Ctrl+C 触发划词翻译（推荐，最稳）")
+        self.dblcopy_check.setChecked(bool(self.cfg.get("double_copy.enabled", True)))
+        hk_form.addRow("", self.dblcopy_check)
+        self.shot_lang_combo = QComboBox()
+        self.shot_lang_combo.addItem("跟随全局目标语言", "")
+        for code, label in LANGUAGES:
+            self.shot_lang_combo.addItem(label, code)
+        self._select_combo_data(self.shot_lang_combo, self.cfg.get("screenshot.target_language", ""))
+        hk_form.addRow("截图翻译目标语言", self.shot_lang_combo)
         self.hotkey_status = QLabel("")
         self.hotkey_status.setObjectName("Hint")
         self.hotkey_status.setWordWrap(True)
@@ -608,7 +624,7 @@ class MainWindow(QMainWindow):
         save_row.addWidget(save_btn)
         lay.addLayout(save_row)
         lay.addStretch(1)
-        return page
+        return scroll
 
     # ---------- 更新 ----------
 
@@ -718,7 +734,8 @@ class MainWindow(QMainWindow):
         self._flush_provider_fields()
         self.cfg.set("hotkeys.select_translate", self.hk_select_edit.text().strip())
         self.cfg.set("hotkeys.screenshot_translate", self.hk_shot_edit.text().strip())
-        self.cfg.set("hotkeys.show_main_window", self.hk_main_edit.text().strip())
+        self.cfg.set("double_copy.enabled", self.dblcopy_check.isChecked())
+        self.cfg.set("screenshot.target_language", self.shot_lang_combo.currentData())
         self.cfg.set("clipboard_watch.enabled", self.watch_check.isChecked())
         self.cfg.set("selection_bubble.enabled", self.bubble_check.isChecked())
         self.cfg.save()

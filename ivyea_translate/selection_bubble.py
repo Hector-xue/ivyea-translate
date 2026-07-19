@@ -29,11 +29,11 @@ log = logging.getLogger(__name__)
 
 _WINDOWS = sys.platform == "win32"
 
-DRAG_MIN_PX = 25          # 拖拽超过该距离视为划选
-DBLCLICK_MAX_GAP = 0.45   # 双击最大间隔（秒）
-DBLCLICK_MAX_DIST = 6     # 双击两次位置最大偏移
+DRAG_MIN_PX = 12          # 拖拽超过该距离视为划选（选短词位移也小）
+DBLCLICK_MAX_GAP = 0.5    # 双击最大间隔（秒）
+DBLCLICK_MAX_DIST = 8     # 双击两次位置最大偏移
 CLICK_MAX_DURATION = 0.6  # 单次点击按住超过该时长且没拖动，不算手势
-POLL_INTERVAL = 0.02
+POLL_INTERVAL = 0.015
 BUBBLE_TIMEOUT_MS = 4000  # 气泡自动消失
 
 
@@ -187,17 +187,39 @@ class SelectionBubble(QWidget):
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
         self._hide_timer.timeout.connect(self.hide)
+        self._noactivate_done = False
+
+    def _apply_noactivate(self) -> None:
+        """Windows：挂 WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW。
+        Qt 的 WindowDoesNotAcceptFocus 挡不住鼠标点击时的窗口激活——
+        一旦气泡抢了激活，注入的 Ctrl+C 会发给气泡自己导致取词失败。"""
+        if self._noactivate_done or not _WINDOWS:
+            return
+        try:
+            import ctypes
+
+            GWL_EXSTYLE = -20
+            WS_EX_NOACTIVATE = 0x08000000
+            WS_EX_TOOLWINDOW = 0x00000080
+            hwnd = int(self.winId())
+            user32 = ctypes.windll.user32
+            style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)
+            self._noactivate_done = True
+        except Exception:
+            log.exception("设置 WS_EX_NOACTIVATE 失败")
 
     def pop_at(self, x: int, y: int) -> None:
-        """在选区松开位置右下方弹出，屏幕边缘自动内收。"""
+        """在选区松开位置右下方弹出（x/y 为 Qt 逻辑坐标），屏幕边缘自动内收。"""
         from PySide6.QtGui import QGuiApplication
 
         screen = QGuiApplication.screenAt(QPoint(x, y)) or QGuiApplication.primaryScreen()
         geo = screen.availableGeometry()
-        px = min(x + 14, geo.x() + geo.width() - self.width() - 4)
-        py = min(y + 18, geo.y() + geo.height() - self.height() - 4)
+        px = min(x + 10, geo.x() + geo.width() - self.width() - 4)
+        py = min(y + 12, geo.y() + geo.height() - self.height() - 4)
         self.move(px, py)
         self.show()
+        self._apply_noactivate()
         self.raise_()
         self._hide_timer.start(BUBBLE_TIMEOUT_MS)
 

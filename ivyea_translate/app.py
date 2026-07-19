@@ -92,6 +92,10 @@ class TranslateApp(QApplication):
         self.watcher = ClipboardWatcher(max_chars=int(self.cfg.get("clipboard_watch.max_chars", 3000)))
         self.watcher.set_enabled(bool(self.cfg.get("clipboard_watch.enabled", False)))
         self.watcher.text_copied.connect(self._popup_translate_at_cursor)
+        # 双击 Ctrl+C 触发划词翻译（文本已在剪贴板，零注入最可靠）
+        self.watcher.double_copy_enabled = bool(self.cfg.get("double_copy.enabled", True))
+        self.watcher.double_window_s = float(self.cfg.get("double_copy.window_ms", 700)) / 1000
+        self.watcher.double_copied.connect(self._popup_translate_at_cursor)
 
         self.window = MainWindow(self.cfg)
         self.window.settings_saved.connect(self._on_settings_saved)
@@ -100,7 +104,6 @@ class TranslateApp(QApplication):
         self.hotkeys = HotkeyManager()
         self.hotkeys.select_translate.connect(self.trigger_select_translate)
         self.hotkeys.screenshot_translate.connect(self.trigger_screenshot_translate)
-        self.hotkeys.show_main_window.connect(self.show_main_window)
         self._register_hotkeys()
 
         self._popups: List[TranslationPopup] = []
@@ -166,6 +169,7 @@ class TranslateApp(QApplication):
     def _on_settings_saved(self) -> None:
         self._register_hotkeys()
         self.watcher.max_chars = int(self.cfg.get("clipboard_watch.max_chars", 3000))
+        self.watcher.double_copy_enabled = bool(self.cfg.get("double_copy.enabled", True))
         enabled = bool(self.cfg.get("clipboard_watch.enabled", False))
         self.watcher.set_enabled(enabled)
         if self.tray:
@@ -204,16 +208,21 @@ class TranslateApp(QApplication):
         self.watcher._paused = paused
 
     def _on_bubble_request(self, x: int, y: int) -> None:
-        """划词手势 -> 弹小气泡。在自家窗口上划选/截图框选中不弹。"""
+        """划词手势 -> 弹小气泡。在自家窗口上划选/截图框选中不弹。
+
+        注意：watcher 给的 x/y 是 Win32 物理像素；Qt 布窗用逻辑像素，
+        高 DPI 缩放屏上直接用会偏出很远。改用此刻的 QCursor.pos()（逻辑坐标，
+        手势刚松开光标就在选区旁）。"""
         if self._overlay is not None:
             return
         from PySide6.QtCore import QPoint
+        from PySide6.QtGui import QCursor
 
-        pt = QPoint(x, y)
+        pt = QCursor.pos()
         for w in [self.window, self.bubble, *self._popups]:
             if w is not None and w.isVisible() and w.frameGeometry().contains(pt):
                 return
-        self.bubble.pop_at(x, y)
+        self.bubble.pop_at(pt.x(), pt.y())
 
     def _notify_no_selection(self) -> None:
         if self.tray:
@@ -228,7 +237,7 @@ class TranslateApp(QApplication):
         popup.show_at_cursor()
         self._start_translate(popup, text)
 
-    def _start_translate(self, popup: TranslationPopup, text: str) -> None:
+    def _start_translate(self, popup: TranslationPopup, text: str, target_lang: str = "") -> None:
         try:
             client = client_from_config(self.cfg)
         except LLMError as e:
@@ -237,7 +246,7 @@ class TranslateApp(QApplication):
         worker = TranslateWorker(
             client,
             text,
-            self.cfg.get("translate.target_language", "zh-CN"),
+            target_lang or self.cfg.get("translate.target_language", "zh-CN"),
             self.cfg.get("translate.style", "general"),
         )
         self._workers.append(worker)
@@ -302,7 +311,8 @@ class TranslateApp(QApplication):
             return
         popup.set_original(text)
         popup.set_status("翻译中…")
-        self._start_translate(popup, text)
+        # 截图翻译可独立设定目标语言（空 = 跟随全局）
+        self._start_translate(popup, text, self.cfg.get("screenshot.target_language", ""))
 
     def _on_ocr_failed(self, message: str, anchor: QRect) -> None:
         popup = getattr(self, "_shot_popup", None)

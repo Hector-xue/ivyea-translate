@@ -87,10 +87,13 @@ QPlainTextEdit, QTextEdit, QLineEdit {{
     background: rgba(255, 255, 255, 0.75);
     border: 1px solid rgba(255, 255, 255, 0.9);
     border-radius: {RADIUS_SM}px;
-    padding: 10px 12px;
+    padding: 8px 12px;
     font-size: 14px;
     selection-background-color: {ACCENT};
     selection-color: white;
+}}
+QLineEdit {{
+    min-height: 24px;  /* 防止高分屏/全屏下输入框塌矮裁字 */
 }}
 QPlainTextEdit:focus, QTextEdit:focus, QLineEdit:focus {{
     border: 1px solid {ACCENT};

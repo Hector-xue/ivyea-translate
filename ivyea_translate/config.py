@@ -91,14 +91,22 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "tone": "business",
     },
     "hotkeys": {
-        # pynput GlobalHotKeys 语法
-        "select_translate": "<ctrl>+<alt>+t",
+        # pynput 风格语法；主键靠左手区，顺手
+        "select_translate": "<ctrl>+<alt>+x",
         "screenshot_translate": "<ctrl>+<alt>+s",
-        "show_main_window": "<ctrl>+<alt>+i",
+    },
+    "double_copy": {
+        # 连按两次 Ctrl+C 触发划词翻译（DeepL 式），无需注入按键最可靠
+        "enabled": True,
+        "window_ms": 700,
     },
     "clipboard_watch": {
         "enabled": False,
         "max_chars": 3000,
+    },
+    "screenshot": {
+        # 截图翻译目标语言；空 = 跟随全局 translate.target_language
+        "target_language": "",
     },
     "selection_bubble": {
         # 划词后光标旁弹出小图标，点击即翻译（仅 Windows）
@@ -158,6 +166,12 @@ class Config:
         # v0.1.x 默认弹窗宽 420 偏小；等于旧默认值视为未自定义，升到新默认
         if ui.get("popup_width") == 420:
             ui["popup_width"] = DEFAULT_CONFIG["ui"]["popup_width"]
+        hk = self._data.get("hotkeys", {})
+        # v0.4 以前默认 <ctrl>+<alt>+t 太远；等于旧默认视为未自定义
+        if hk.get("select_translate") == "<ctrl>+<alt>+t":
+            hk["select_translate"] = DEFAULT_CONFIG["hotkeys"]["select_translate"]
+        # 呼出主窗口快捷键已移除（任务栏/托盘点击即可）
+        hk.pop("show_main_window", None)
 
     def save(self) -> None:
         with self._lock:
