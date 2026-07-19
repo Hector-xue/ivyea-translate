@@ -93,6 +93,7 @@ class MainWindow(QMainWindow):
 
         tabs = QTabWidget()
         tabs.addTab(self._build_translate_tab(), "翻译")
+        tabs.addTab(self._build_email_tab(), "邮件")
         tabs.addTab(self._build_history_tab(), "历史")
         tabs.addTab(self._build_settings_tab(), "设置")
         outer.addWidget(tabs, 1)
@@ -251,6 +252,157 @@ class MainWindow(QMainWindow):
             if app and hasattr(app, "mark_own_copy"):
                 app.mark_own_copy(text)
             QGuiApplication.clipboard().setText(text)
+
+    # ================= 邮件页 =================
+
+    def _build_email_tab(self) -> QWidget:
+        from ..translator import EMAIL_TONES
+
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(0, 12, 0, 0)
+        lay.setSpacing(12)
+
+        card = _glass_card()
+        card_lay = QVBoxLayout(card)
+        card_lay.setContentsMargins(18, 16, 18, 18)
+        card_lay.setSpacing(10)
+
+        opts = QHBoxLayout()
+        opts.addWidget(QLabel("目标语言"))
+        self.email_lang_combo = QComboBox()
+        for code, label in LANGUAGES:
+            self.email_lang_combo.addItem(label, code)
+        self._select_combo_data(self.email_lang_combo, self.cfg.get("email.target_language", "en"))
+        opts.addWidget(self.email_lang_combo)
+        opts.addSpacing(12)
+        opts.addWidget(QLabel("语气"))
+        self.email_tone_combo = QComboBox()
+        for code, (label, _rule) in EMAIL_TONES.items():
+            self.email_tone_combo.addItem(label, code)
+        self._select_combo_data(self.email_tone_combo, self.cfg.get("email.tone", "business"))
+        opts.addWidget(self.email_tone_combo)
+        hint = QLabel("按目标语言的邮件礼仪重写优化，并自动总结主题")
+        hint.setObjectName("Hint")
+        opts.addWidget(hint)
+        opts.addStretch(1)
+        card_lay.addLayout(opts)
+
+        self.email_source = QPlainTextEdit()
+        self.email_source.setPlaceholderText(
+            "粘贴或输入邮件草稿（任何语言、想到哪写到哪都行）…\n"
+            "例如：告诉客户发货推迟三天，物流拥堵导致，表达歉意并给 5% 折扣"
+        )
+        self.email_source.setMinimumHeight(110)
+        card_lay.addWidget(self.email_source)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch(1)
+        self.email_btn = QPushButton("优化并翻译")
+        self.email_btn.setObjectName("Primary")
+        self.email_btn.setMinimumWidth(130)
+        self.email_btn.clicked.connect(self._on_email_clicked)
+        btn_row.addWidget(self.email_btn)
+        card_lay.addLayout(btn_row)
+        lay.addWidget(card)
+
+        result_card = _glass_card()
+        res_lay = QVBoxLayout(result_card)
+        res_lay.setContentsMargins(18, 14, 18, 16)
+        res_lay.setSpacing(8)
+
+        subj_row = QHBoxLayout()
+        subj_label = QLabel("主题")
+        subj_label.setObjectName("CardTitle")
+        subj_row.addWidget(subj_label)
+        self.email_subject = QLineEdit()
+        self.email_subject.setReadOnly(True)
+        self.email_subject.setPlaceholderText("自动总结的邮件主题会出现在这里")
+        subj_row.addWidget(self.email_subject, 1)
+        copy_subj_btn = QPushButton("复制主题")
+        copy_subj_btn.setObjectName("Ghost")
+        copy_subj_btn.clicked.connect(lambda: self._copy_text(self.email_subject.text()))
+        subj_row.addWidget(copy_subj_btn)
+        res_lay.addLayout(subj_row)
+
+        body_head = QHBoxLayout()
+        body_label = QLabel("正文")
+        body_label.setObjectName("CardTitle")
+        body_head.addWidget(body_label)
+        body_head.addStretch(1)
+        copy_body_btn = QPushButton("复制正文")
+        copy_body_btn.setObjectName("Ghost")
+        copy_body_btn.clicked.connect(lambda: self._copy_text(self.email_body.toPlainText()))
+        body_head.addWidget(copy_body_btn)
+        res_lay.addLayout(body_head)
+        self.email_body = QPlainTextEdit()
+        self.email_body.setReadOnly(True)
+        self.email_body.setPlaceholderText("优化后的邮件正文会出现在这里")
+        res_lay.addWidget(self.email_body, 1)
+        lay.addWidget(result_card, 1)
+        return page
+
+    def _copy_text(self, text: str) -> None:
+        if text:
+            from PySide6.QtGui import QGuiApplication
+            from PySide6.QtWidgets import QApplication
+
+            app = QApplication.instance()
+            if app and hasattr(app, "mark_own_copy"):
+                app.mark_own_copy(text)
+            QGuiApplication.clipboard().setText(text)
+
+    def _on_email_clicked(self) -> None:
+        from ..translator import build_email_messages
+
+        text = self.email_source.toPlainText().strip()
+        if not text:
+            return
+        if getattr(self, "_email_worker", None) is not None and self._email_worker.isRunning():
+            self._email_worker.cancel()
+        try:
+            client = client_from_config(self.cfg)
+        except LLMError as e:
+            self.email_body.setPlainText(str(e))
+            return
+        lang = self.email_lang_combo.currentData()
+        tone = self.email_tone_combo.currentData()
+        self.cfg.set("email.target_language", lang)
+        self.cfg.set("email.tone", tone)
+        self.cfg.save()
+        self.email_subject.clear()
+        self.email_body.setPlainText("")
+        self.email_btn.setEnabled(False)
+        self.email_btn.setText("优化中…")
+        self._email_worker = TranslateWorker(
+            client, text, lang, "general", parent=self,
+            messages=build_email_messages(text, lang, tone),
+        )
+        # 流式阶段原样滚动显示，完成后再拆主题/正文
+        self._email_worker.chunk.connect(self._append_email_chunk)
+        self._email_worker.finished_ok.connect(lambda full, s=text: self._email_done(s, full))
+        self._email_worker.failed.connect(self._email_failed)
+        self._email_worker.start()
+
+    def _append_email_chunk(self, piece: str) -> None:
+        self.email_body.moveCursor(self.email_body.textCursor().MoveOperation.End)
+        self.email_body.insertPlainText(piece)
+
+    def _email_done(self, source: str, full: str) -> None:
+        from ..translator import parse_email_output
+
+        subject, body = parse_email_output(full)
+        self.email_subject.setText(subject)
+        self.email_body.setPlainText(body)
+        self.email_btn.setEnabled(True)
+        self.email_btn.setText("优化并翻译")
+        self.add_history(source, (f"【主题】{subject}\n{body}" if subject else body),
+                         self.email_lang_combo.currentData(), "email")
+
+    def _email_failed(self, message: str) -> None:
+        self.email_btn.setEnabled(True)
+        self.email_btn.setText("优化并翻译")
+        self.email_body.setPlainText(message)
 
     # ================= 历史页 =================
 

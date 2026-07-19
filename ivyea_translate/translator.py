@@ -48,6 +48,69 @@ STYLE_RULES: Dict[str, str] = {
 
 ENGLISH_ONLY_STYLES = {"american", "british"}
 
+# ---------- 邮件助手 ----------
+
+# 邮件语气：code -> (中文名, prompt 规则)
+EMAIL_TONES: Dict[str, tuple] = {
+    "business": ("商务正式", "Use a polished, formal business tone."),
+    "friendly": ("友好亲和", "Use a warm, friendly yet professional tone."),
+    "concise": ("简洁高效", "Be brief and to the point; cut all pleasantries that carry no information."),
+    "urgent": ("礼貌催促", "Convey polite but firm urgency appropriate for a follow-up or reminder."),
+    "apologetic": ("致歉安抚", "Use a sincere, accountable, reassuring tone suitable for an apology."),
+    "thankful": ("感谢致意", "Express genuine appreciation and goodwill."),
+}
+
+SUBJECT_MARK = "【主题】"
+BODY_MARK = "【正文】"
+
+
+def build_email_messages(text: str, target_language: str, tone: str) -> List[Dict[str, str]]:
+    """邮件优化 prompt。纯函数。
+
+    要求模型：按目标语言母语者的邮件惯例重写（称呼/正文/结尾），
+    不直译不添油加醋，并总结一行主题；输出用固定标记便于解析。
+    """
+    lang_name = LANGUAGE_NAMES.get(target_language, target_language)
+    tone_rule = EMAIL_TONES.get(tone, EMAIL_TONES["business"])[1]
+    system = (
+        "You are a professional bilingual email assistant. "
+        f"Rewrite the user's draft as a polished, natural email in {lang_name}, "
+        "following the email conventions native speakers actually use "
+        "(appropriate greeting, well-organized body, proper closing). "
+        f"{tone_rule} "
+        "Preserve every fact in the draft; do not invent information. "
+        "If the draft lacks names, use natural generic forms (e.g. 'Hi team,' / '尊敬的客户'). "
+        "Also write ONE concise subject line in the same target language that summarizes the email. "
+        "Output EXACTLY in this format, nothing else:\n"
+        f"{SUBJECT_MARK}<subject line>\n"
+        f"{BODY_MARK}\n"
+        "<email body>"
+    )
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": text},
+    ]
+
+
+def parse_email_output(text: str) -> tuple:
+    """把模型输出拆成 (主题, 正文)。标记缺失时优雅降级。"""
+    subject = ""
+    body = text.strip()
+    if SUBJECT_MARK in text:
+        after = text.split(SUBJECT_MARK, 1)[1]
+        if BODY_MARK in after:
+            subject_part, body = after.split(BODY_MARK, 1)
+        else:
+            lines = after.split("\n", 1)
+            subject_part, body = lines[0], (lines[1] if len(lines) > 1 else "")
+        subject = subject_part.strip()
+        body = body.strip()
+    elif body.lower().startswith("subject:"):
+        lines = body.split("\n", 1)
+        subject = lines[0][len("subject:"):].strip()
+        body = (lines[1] if len(lines) > 1 else "").strip()
+    return subject, body
+
 
 def build_messages(text: str, target_language: str, style: str) -> List[Dict[str, str]]:
     """编译翻译请求的 messages。纯函数。
@@ -81,12 +144,14 @@ class TranslateWorker(QThread):
     finished_ok = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, client: LLMClient, text: str, target_language: str, style: str, parent=None):
+    def __init__(self, client: LLMClient, text: str, target_language: str, style: str,
+                 parent=None, messages: List[Dict[str, str]] = None):
         super().__init__(parent)
         self._client = client
         self._text = text
         self._target_language = target_language
         self._style = style
+        self._messages = messages  # 传入则直接用（邮件助手等定制 prompt）
         self._cancelled = False
 
     def cancel(self) -> None:
@@ -95,7 +160,7 @@ class TranslateWorker(QThread):
     def run(self) -> None:
         parts: List[str] = []
         try:
-            messages = build_messages(self._text, self._target_language, self._style)
+            messages = self._messages or build_messages(self._text, self._target_language, self._style)
             for piece in self._client.stream_chat(messages):
                 if self._cancelled:
                     return

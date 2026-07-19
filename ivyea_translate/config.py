@@ -86,6 +86,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "target_language": "zh-CN",
         "style": "general",
     },
+    "email": {
+        "target_language": "en",
+        "tone": "business",
+    },
     "hotkeys": {
         # pynput GlobalHotKeys 语法
         "select_translate": "<ctrl>+<alt>+t",
