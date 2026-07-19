@@ -30,6 +30,58 @@ body {
   overflow-x: hidden;
 }
 
+/* ---------- 景深背景层：极光色斑 + 虚化叶丛 ---------- */
+.bg-deco {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.aurora {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(64px);
+  will-change: transform;
+  animation: drift 30s ease-in-out infinite alternate;
+}
+.a1 {
+  width: 58vw; height: 46vw;
+  left: -12vw; top: -14vw;
+  background: radial-gradient(closest-side, rgba(196, 226, 150, 0.55), transparent 72%);
+}
+.a2 {
+  width: 52vw; height: 44vw;
+  right: -14vw; top: 6vh;
+  background: radial-gradient(closest-side, rgba(246, 236, 178, 0.6), transparent 70%);
+  animation-delay: -10s; animation-duration: 36s;
+}
+.a3 {
+  width: 60vw; height: 50vw;
+  left: 18vw; bottom: -24vw;
+  background: radial-gradient(closest-side, rgba(168, 214, 196, 0.5), transparent 72%);
+  animation-delay: -20s; animation-duration: 42s;
+}
+@keyframes drift {
+  0%   { transform: translate(0, 0) scale(1); }
+  50%  { transform: translate(4vw, 3vh) scale(1.12); }
+  100% { transform: translate(-3vw, -2vh) scale(0.95); }
+}
+.bokeh {
+  position: absolute;
+  user-select: none;
+}
+.bokeh-l { left: -130px; top: -110px; width: min(640px, 52vw); }
+.bokeh-r { right: -110px; bottom: -60px; width: min(600px, 50vw); }
+@media (prefers-reduced-motion: reduce) {
+  .aurora { animation: none; }
+}
+@media (max-width: 720px) {
+  .bokeh-l { width: 64vw; left: -18vw; top: -12vw; }
+  .bokeh-r { width: 62vw; right: -16vw; bottom: -8vw; }
+  .aurora { filter: blur(46px); }
+}
+
 /* 藤蔓画布铺满整页、垫底 */
 #ivy-canvas {
   position: fixed;
