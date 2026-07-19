@@ -29,11 +29,11 @@
   // ---- 调参 ----
   var STEP = 2.4;
   var MAX_TIPS = MOBILE ? 14 : 30;
-  var LEAF_EVERY = [8, 13];
+  var LEAF_EVERY = [6, 10];
   var LEAF_LIVE_S = 6.0;            // 新叶动画期
   var ATTRACT_R = MOBILE ? 150 : 230;
   var DWELL_MS = 300;
-  var VINE_LIFE = [200, 460];
+  var VINE_LIFE = [150, 340];
   var BERRY_CHANCE = 0.35;
   var LEAF_SCALE = MOBILE ? 0.8 : 1;
   var TRAIL_GAP = 64;               // 划过多远冒一簇
@@ -45,8 +45,8 @@
   var MAX_FALLING = 36;             // 同时飘落的叶数上限（防帧率崩）
   var MOTES = MOBILE ? 10 : 18;     // 常驻光尘数
 
-  var STEM_YOUNG = [143, 176, 94];
-  var STEM_MID = [94, 127, 66];
+  var STEM_YOUNG = [118, 150, 78];
+  var STEM_MID = [76, 106, 56];
   var STEM_WOODY = [110, 91, 68];
   var LEAF_STAGES = [[176, 212, 122], [136, 184, 88], [107, 165, 63], [77, 128, 47]];
   var LEAF_ADULT = [62, 104, 42];
@@ -216,7 +216,7 @@
       if (v.age >= v.life) { finishVine(v); return false; }
       if (v.cohort.state !== "grow") { v.cohort = currentCohort(); }
       v.curl = v.curl * 0.965 + rand(-0.028, 0.028);
-      v.curl = Math.max(-0.11, Math.min(0.11, v.curl));
+      v.curl = Math.max(-0.085, Math.min(0.085, v.curl));
       var up = -Math.PI / 2;
       var du = ((up - v.heading + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
       v.heading += v.curl + du * 0.006;

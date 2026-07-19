@@ -14,7 +14,7 @@
 
 html { scroll-behavior: smooth; }
 
-html { background: #7A8087; }
+html { background: #6E5548; }
 
 body {
   font-family: "PingFang SC", "Microsoft YaHei UI", "Noto Sans CJK SC", "Segoe UI", sans-serif;
@@ -22,8 +22,8 @@ body {
   /* 青灰古城墙全强度打底（公有领域照片调色），只做摄影式暗角与顶光塑造纵深，
      不加蒙版——墙就是场景本身，藤长在墙上，文字浮在墙前 */
   background:
-    radial-gradient(125% 105% at 50% 30%, rgba(18, 22, 26, 0) 52%, rgba(18, 22, 26, 0.42) 100%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.10) 0%, rgba(255, 255, 255, 0) 30%, rgba(10, 14, 10, 0.12) 100%),
+    radial-gradient(130% 110% at 50% 28%, rgba(26, 16, 10, 0) 50%, rgba(26, 16, 10, 0.45) 100%),
+    linear-gradient(180deg, rgba(255, 244, 224, 0.10) 0%, rgba(255, 244, 224, 0) 32%, rgba(20, 12, 8, 0.18) 100%),
     url("../assets/wall.jpg") center / cover no-repeat;
   background-attachment: fixed, fixed, fixed;
   min-height: 100vh;
