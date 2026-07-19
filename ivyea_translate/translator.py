@@ -160,6 +160,14 @@ class TranslateWorker(QThread):
     def run(self) -> None:
         parts: List[str] = []
         try:
+            if self._messages is None and getattr(self._client, "is_free", False):
+                # 免费引擎：非流式，一次返回整段
+                result = self._client.translate(self._text, self._target_language)
+                if self._cancelled:
+                    return
+                self.chunk.emit(result)
+                self.finished_ok.emit(result)
+                return
             messages = self._messages or build_messages(self._text, self._target_language, self._style)
             for piece in self._client.stream_chat(messages):
                 if self._cancelled:

@@ -17,7 +17,7 @@ from .clipboard_watch import ClipboardWatcher
 from .selection_bubble import SelectionBubble, SelectionWatcher
 from .config import CONFIG_DIR, Config
 from .hotkeys import HotkeyManager
-from .llm import LLMError, client_from_config
+from .llm import LLMError
 from .ocr import ocr_engine
 from .translator import TranslateWorker
 from .ui import theme
@@ -238,8 +238,10 @@ class TranslateApp(QApplication):
         self._start_translate(popup, text)
 
     def _start_translate(self, popup: TranslationPopup, text: str, target_lang: str = "") -> None:
+        from .free_engine import resolve_engine
+
         try:
-            client = client_from_config(self.cfg)
+            client = resolve_engine(self.cfg)
         except LLMError as e:
             popup.set_failed(str(e))
             return

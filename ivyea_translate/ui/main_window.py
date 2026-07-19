@@ -213,8 +213,10 @@ class MainWindow(QMainWindow):
             return
         if self._worker is not None and self._worker.isRunning():
             self._worker.cancel()
+        from ..free_engine import resolve_engine
+
         try:
-            client = client_from_config(self.cfg)
+            client = resolve_engine(self.cfg)
         except LLMError as e:
             self.result_view.setPlainText(str(e))
             return
@@ -361,10 +363,14 @@ class MainWindow(QMainWindow):
             return
         if getattr(self, "_email_worker", None) is not None and self._email_worker.isRunning():
             self._email_worker.cancel()
+        # 邮件助手需要大模型的改写能力，免费翻译引擎无法胜任
         try:
             client = client_from_config(self.cfg)
-        except LLMError as e:
-            self.email_body.setPlainText(str(e))
+        except LLMError:
+            self.email_body.setPlainText(
+                "邮件助手需要配置大模型：请到「设置 → 翻译模型」填写 API Key。\n"
+                "（免费翻译引擎只做直译，不支持邮件改写与主题总结。）"
+            )
             return
         lang = self.email_lang_combo.currentData()
         tone = self.email_tone_combo.currentData()
@@ -496,6 +502,32 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(0, 12, 8, 12)
         lay.setSpacing(12)
         scroll.setWidget(page)
+
+        # 翻译引擎卡
+        eng_card = _glass_card()
+        ec = QVBoxLayout(eng_card)
+        ec.setContentsMargins(18, 14, 18, 16)
+        et = QLabel("翻译引擎")
+        et.setObjectName("CardTitle")
+        ec.addWidget(et)
+        eng_form = QFormLayout()
+        eng_form.setHorizontalSpacing(14)
+        eng_form.setVerticalSpacing(10)
+        self.engine_combo = QComboBox()
+        self.engine_combo.addItem("自动（未配置模型时用免费翻译）", "auto")
+        self.engine_combo.addItem("免费翻译（无需配置，开箱即用）", "free")
+        self.engine_combo.addItem("我的大模型", "llm")
+        self._select_combo_data(self.engine_combo, self.cfg.get("translate.engine", "auto"))
+        eng_form.addRow("引擎", self.engine_combo)
+        eng_hint = QLabel(
+            "免费翻译基于公开翻译接口，无需 API Key 即可直接使用；\n"
+            "配置大模型可获得更高质量、风格控制与邮件助手。"
+        )
+        eng_hint.setObjectName("Hint")
+        eng_hint.setWordWrap(True)
+        eng_form.addRow("", eng_hint)
+        ec.addLayout(eng_form)
+        lay.addWidget(eng_card)
 
         # 模型卡
         model_card = _glass_card()
@@ -705,11 +737,16 @@ class MainWindow(QMainWindow):
 
         import threading
 
+        from ..free_engine import resolve_engine
+
         def run():
             try:
-                client = client_from_config(self.cfg)
-                reply = client.test_connection()
-                msg, ok = f"连通正常（模型回复：{reply[:30]}）", True
+                engine = resolve_engine(self.cfg)
+                reply = engine.test_connection()
+                if getattr(engine, "is_free", False):
+                    msg, ok = reply, True  # 已含"免费引擎可用（…）"
+                else:
+                    msg, ok = f"连通正常（模型回复：{reply[:30]}）", True
             except LLMError as e:
                 msg, ok = str(e), False
             except Exception as e:
@@ -725,6 +762,8 @@ class MainWindow(QMainWindow):
         self.test_result.setText(msg)
 
     def _flush_provider_fields(self) -> None:
+        # 引擎选择也在此落盘：测试连接与保存都会先调用本方法
+        self.cfg.set("translate.engine", self.engine_combo.currentData())
         self.cfg.set("provider.preset", self.preset_combo.currentData())
         self.cfg.set("provider.base_url", self.base_url_edit.text().strip())
         self.cfg.set("provider.api_key", self.api_key_edit.text().strip())

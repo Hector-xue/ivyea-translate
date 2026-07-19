@@ -85,6 +85,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "translate": {
         "target_language": "zh-CN",
         "style": "general",
+        # 翻译引擎：auto(配了Key用大模型,否则免费) / free(始终免费) / llm(始终大模型)
+        "engine": "auto",
     },
     "email": {
         "target_language": "en",
