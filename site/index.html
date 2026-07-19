@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ivyea Translate — 随手即译的桌面 AI 翻译</title>
+<meta name="description" content="划词气泡、截图翻译、复制翻译。接入你自己的大模型，14 种语言、7 种风格，随手即译。Windows 桌面翻译软件。">
+<meta property="og:title" content="Ivyea Translate — 随手即译">
+<meta property="og:description" content="划词 · 截图 · 复制，接入你自己的大模型的桌面 AI 翻译。">
+<meta property="og:image" content="https://translate.ivyea.com/assets/logo.png">
+<link rel="icon" href="assets/favicon.ico">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<canvas id="ivy-canvas" aria-hidden="true"></canvas>
+
+<header class="nav">
+  <a class="brand" href="/">
+    <img src="assets/logo.png" alt="Ivyea Translate logo" width="34" height="34">
+    <span>Ivyea Translate</span>
+  </a>
+  <nav>
+    <a href="#features">功能</a>
+    <a href="#download">下载</a>
+    <a href="https://ivyea.com" target="_blank" rel="noopener">Ivyea</a>
+    <a class="gh" href="https://github.com/Hector-xue/ivyea-translate" target="_blank" rel="noopener">GitHub</a>
+  </nav>
+</header>
+
+<main>
+  <!-- ============ Hero ============ -->
+  <section class="hero">
+    <h1>让翻译，<em>自然生长</em></h1>
+    <p class="sub">划词 · 截图 · 复制，随手即译。<br>接入你自己的大模型，翻译成为桌面上最顺手的那个动作。</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/Hector-xue/ivyea-translate/releases/latest/download/IvyeaTranslate-Setup.exe">
+        下载 Windows 安装版
+      </a>
+      <a class="btn ghost" href="https://github.com/Hector-xue/ivyea-translate/releases/latest/download/IvyeaTranslate.exe">
+        便携版 .exe
+      </a>
+    </div>
+    <div id="ivy-hint" class="hint">移动鼠标让常春藤生长 · 停留种芽 · 点击爆发</div>
+    <a class="scroll-cue" href="#showcase" aria-label="向下滚动">↓</a>
+  </section>
+
+  <!-- ============ 产品截图 ============ -->
+  <section class="showcase" id="showcase">
+    <div class="shot-wrap">
+      <img class="shot main" src="assets/app-main.png" alt="Ivyea Translate 主界面" loading="lazy">
+      <img class="shot popup" src="assets/app-popup.png" alt="划词翻译弹窗" loading="lazy">
+    </div>
+  </section>
+
+  <!-- ============ 三大入口 ============ -->
+  <section class="features" id="features">
+    <h2>三种姿势，随手即译</h2>
+    <div class="cards">
+      <div class="card">
+        <div class="ico">
+          <svg viewBox="0 0 32 32" width="34" height="34" fill="none" stroke="#5B9334" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 8 h17 a5 5 0 0 1 5 5 v4 a5 5 0 0 1 -5 5 h-8 l-5 5 v-5 h-4 a4 4 0 0 1 -4 -4 v-6 a4 4 0 0 1 4 -4 z" opacity="0.55"/>
+            <path d="M15 20 c0-5 3-8 8-8 c0 5-3 8-8 8 z" fill="#6BA53F" stroke="none"/>
+            <path d="M15 20 c2-3 4-5 6-6" stroke="#fff" stroke-width="1.2"/>
+          </svg>
+        </div>
+        <h3>划词气泡</h3>
+        <p>选中任意文字，光标旁自然冒出一枚叶子图标——点一下，译文就在原文下方展开。不抢焦点，不打断阅读。</p>
+      </div>
+      <div class="card">
+        <div class="ico">
+          <svg viewBox="0 0 32 32" width="34" height="34" fill="none" stroke="#5B9334" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 10 V6 a2 2 0 0 1 2-2 h4 M22 4 h4 a2 2 0 0 1 2 2 v4 M28 22 v4 a2 2 0 0 1 -2 2 h-4 M10 28 H6 a2 2 0 0 1 -2-2 v-4"/>
+            <text x="16" y="21" text-anchor="middle" font-size="13" fill="#6BA53F" stroke="none" font-family="sans-serif" font-weight="bold">文</text>
+          </svg>
+        </div>
+        <h3>截图翻译</h3>
+        <p>框选屏幕任意区域，本地 OCR 识别后即刻翻译。译文弹窗永远长在框选区域<b>之外</b>，绝不遮挡原文。</p>
+      </div>
+      <div class="card">
+        <div class="ico">
+          <svg viewBox="0 0 32 32" width="34" height="34" fill="none" stroke="#5B9334" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="10" y="10" width="16" height="18" rx="3"/>
+            <path d="M22 10 V8 a3 3 0 0 0 -3-3 H9 a3 3 0 0 0 -3 3 v12 a3 3 0 0 0 3 3 h1" opacity="0.55"/>
+            <path d="M14 17 h8 M14 21 h8 M14 25 h5"/>
+          </svg>
+        </div>
+        <h3>复制翻译</h3>
+        <p>开启监听后，Ctrl+C 复制的任何文本自动弹出译文。读外文文档时，翻译几乎是零动作的。</p>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="cell"><b>模型自由</b><span>任意 OpenAI 兼容接口：DeepSeek、OpenAI、OpenRouter、硅基流动或自建，Key 只存在你本机</span></div>
+      <div class="cell"><b>14 种语言</b><span>中英日韩法德西俄等互译，流式输出，边译边读</span></div>
+      <div class="cell"><b>7 种风格</b><span>美式 / 英式 / 正式 / 口语 / 学术 / 简洁，语体随场景切换</span></div>
+      <div class="cell"><b>本地 OCR</b><span>截图识别在本机完成，图片不上传任何服务器</span></div>
+      <div class="cell"><b>弹窗可塑</b><span>可拖动、可钉住、可调大小，译文历史自动沉淀</span></div>
+      <div class="cell"><b>轻量常驻</b><span>托盘常驻，全局快捷键可自定义，冲突逐条提示</span></div>
+    </div>
+  </section>
+
+  <!-- ============ Ivy 隐喻 ============ -->
+  <section class="lifecycle">
+    <h2>为什么是常春藤</h2>
+    <p class="lead">Hedera helix，萌芽、攀爬、成熟、结果——它沿着墙面一寸寸探路，把每一个角落长成自己的领地。<br>
+    好的翻译工具也该如此：从一次划词开始，悄悄爬满你的工作流。</p>
+    <div class="stages">
+      <div class="stage"><i>萌芽</i><span>选中一段文字</span></div>
+      <div class="arrow">→</div>
+      <div class="stage"><i>攀爬</i><span>识别与理解</span></div>
+      <div class="arrow">→</div>
+      <div class="stage"><i>成熟</i><span>译文自然舒展</span></div>
+      <div class="arrow">→</div>
+      <div class="stage"><i>结果</i><span>沉淀进历史</span></div>
+    </div>
+  </section>
+
+  <!-- ============ 下载 ============ -->
+  <section class="download" id="download">
+    <h2>把它种进你的桌面</h2>
+    <div class="dl-cards">
+      <div class="dl-card">
+        <h3>安装版</h3>
+        <p>向导安装 · 开始菜单与桌面快捷方式 · 可卸载</p>
+        <a class="btn primary" href="https://github.com/Hector-xue/ivyea-translate/releases/latest/download/IvyeaTranslate-Setup.exe">IvyeaTranslate-Setup.exe</a>
+      </div>
+      <div class="dl-card">
+        <h3>便携版</h3>
+        <p>单文件免安装 · 双击即用 · 适合 U 盘随身携带</p>
+        <a class="btn ghost" href="https://github.com/Hector-xue/ivyea-translate/releases/latest/download/IvyeaTranslate.exe">IvyeaTranslate.exe</a>
+      </div>
+    </div>
+    <p class="req">Windows 10/11 · 首次使用在「设置」里填入你的模型 API Key 即可 · <a href="https://github.com/Hector-xue/ivyea-translate/releases" target="_blank" rel="noopener">全部版本</a></p>
+  </section>
+</main>
+
+<footer>
+  <div class="foot-inner">
+    <div class="foot-brand">
+      <img src="assets/logo.png" alt="" width="26" height="26">
+      <span>Ivyea Translate</span>
+    </div>
+    <nav>
+      <a href="https://ivyea.com" target="_blank" rel="noopener">ivyea.com</a>
+      <a href="https://agent.ivyea.com" target="_blank" rel="noopener">agent.ivyea.com</a>
+      <a href="https://github.com/Hector-xue/ivyea-translate" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+    <span class="copy">© 2026 Ivyea</span>
+  </div>
+</footer>
+
+<script src="js/ivy.js" defer></script>
+</body>
+</html>
