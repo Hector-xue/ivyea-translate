@@ -19,10 +19,13 @@ html { background: #FBFDF7; }
 body {
   font-family: "PingFang SC", "Microsoft YaHei UI", "Noto Sans CJK SC", "Segoe UI", sans-serif;
   color: var(--ink);
+  /* 古石墙打底（公有领域照片，已洗淡），上覆绿纸色罩保持清新与可读性；
+     中心亮四周现墙，像老墙上开了一扇被光照亮的阅读窗 */
   background:
-    radial-gradient(1200px 700px at 80% -10%, rgba(107, 165, 63, 0.10), transparent 60%),
-    linear-gradient(160deg, #F3F8EC 0%, #FBFDF7 45%, #E9F2DF 100%);
-  background-attachment: fixed, fixed;
+    radial-gradient(110% 85% at 50% 36%, rgba(250, 253, 245, 0.82) 0%, rgba(247, 251, 241, 0.55) 48%, rgba(238, 244, 228, 0.22) 100%),
+    linear-gradient(160deg, rgba(233, 244, 223, 0.35) 0%, rgba(251, 253, 247, 0.22) 45%, rgba(222, 239, 210, 0.35) 100%),
+    url("../assets/wall.jpg") center / 1100px auto repeat;
+  background-attachment: fixed, fixed, fixed;
   min-height: 100vh;
   overflow-x: hidden;
 }
