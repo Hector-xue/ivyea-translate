@@ -119,6 +119,12 @@ class TranslateApp(QApplication):
         self._setup_tray()
         ocr_engine.warmup_async()
 
+        # 启动 8 秒后后台静默检查更新（失败无感知）
+        if bool(self.cfg.get("update.auto_check", True)):
+            from PySide6.QtCore import QTimer
+
+            QTimer.singleShot(8000, self._auto_check_update)
+
     # ---------- 装配 ----------
 
     def _register_hotkeys(self) -> None:
@@ -303,6 +309,27 @@ class TranslateApp(QApplication):
         if popup is None:
             return
         popup.set_failed(f"识别失败：{message}")
+
+    # ---------- 更新 ----------
+
+    def _auto_check_update(self) -> None:
+        from .updater import UpdateChecker
+
+        self._upd_checker = UpdateChecker(
+            self.cfg.get("update.feed_url") or "https://translate.ivyea.com/download/version.json"
+        )
+        self._upd_checker.update_available.connect(self._on_update_found)
+        self._upd_checker.start()
+
+    def _on_update_found(self, feed: dict) -> None:
+        self.window.show_update_available(feed)
+        if self.tray:
+            self.tray.showMessage(
+                "Ivyea Translate",
+                f"发现新版本 v{feed['version']}，可在设置页一键更新",
+                QSystemTrayIcon.Information,
+                4000,
+            )
 
     # ---------- 退出 ----------
 

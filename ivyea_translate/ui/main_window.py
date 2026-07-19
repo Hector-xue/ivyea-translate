@@ -419,6 +419,32 @@ class MainWindow(QMainWindow):
         hc.addLayout(hk_form)
         lay.addWidget(hk_card)
 
+        # 关于与更新卡
+        up_card = _glass_card()
+        uc = QVBoxLayout(up_card)
+        uc.setContentsMargins(18, 14, 18, 16)
+        ut = QLabel("关于与更新")
+        ut.setObjectName("CardTitle")
+        uc.addWidget(ut)
+        up_row = QHBoxLayout()
+        from .. import __version__
+
+        self.version_label = QLabel(f"Ivyea Translate v{__version__}")
+        up_row.addWidget(self.version_label)
+        self.update_status = QLabel("")
+        self.update_status.setObjectName("Hint")
+        up_row.addWidget(self.update_status, 1)
+        self.update_btn = QPushButton("")
+        self.update_btn.setObjectName("Primary")
+        self.update_btn.setVisible(False)
+        self.update_btn.clicked.connect(self._on_apply_update)
+        up_row.addWidget(self.update_btn)
+        self.check_update_btn = QPushButton("检查更新")
+        self.check_update_btn.clicked.connect(self._on_check_update)
+        up_row.addWidget(self.check_update_btn)
+        uc.addLayout(up_row)
+        lay.addWidget(up_card)
+
         save_row = QHBoxLayout()
         self.save_status = QLabel("")
         self.save_status.setObjectName("Hint")
@@ -431,6 +457,70 @@ class MainWindow(QMainWindow):
         lay.addLayout(save_row)
         lay.addStretch(1)
         return page
+
+    # ---------- 更新 ----------
+
+    def _on_check_update(self) -> None:
+        from ..updater import UpdateChecker
+
+        self.check_update_btn.setEnabled(False)
+        self.update_status.setStyleSheet("")
+        self.update_status.setText("检查中…")
+        self._update_checker = UpdateChecker(
+            self.cfg.get("update.feed_url") or "https://translate.ivyea.com/download/version.json",
+            parent=self,
+        )
+        self._update_checker.update_available.connect(self.show_update_available)
+        self._update_checker.no_update.connect(
+            lambda: (self.check_update_btn.setEnabled(True), self.update_status.setText("已是最新版本"))
+        )
+        self._update_checker.failed.connect(
+            lambda msg: (self.check_update_btn.setEnabled(True), self.update_status.setText(msg))
+        )
+        self._update_checker.start()
+
+    def show_update_available(self, feed: dict) -> None:
+        """手动检查或启动时静默检查发现新版后调用。"""
+        self._update_feed = feed
+        self.check_update_btn.setEnabled(True)
+        self.update_status.setStyleSheet(f"color: {theme.ACCENT};")
+        self.update_status.setText(f"发现新版本 v{feed['version']}")
+        self.update_btn.setText(f"更新到 v{feed['version']}")
+        self.update_btn.setVisible(True)
+
+    def _on_apply_update(self) -> None:
+        from ..updater import UpdateDownloader, apply_update_and_quit, is_installed_copy
+
+        feed = getattr(self, "_update_feed", None)
+        if not feed:
+            return
+        if not is_installed_copy():
+            # 便携版/源码运行：打开官网下载页
+            from PySide6.QtGui import QDesktopServices
+            from PySide6.QtCore import QUrl
+
+            QDesktopServices.openUrl(QUrl(feed.get("page_url", "https://translate.ivyea.com/")))
+            return
+        self.update_btn.setEnabled(False)
+        self.update_status.setText("下载中… 0%")
+        self._update_dl = UpdateDownloader(feed["setup_url"], feed["version"], parent=self)
+        self._update_dl.progress.connect(
+            lambda pct: self.update_status.setText(f"下载中… {pct}%")
+        )
+        self._update_dl.failed.connect(
+            lambda msg: (self.update_btn.setEnabled(True), self.update_status.setText(msg))
+        )
+        self._update_dl.finished_ok.connect(self._on_update_downloaded)
+        self._update_dl.start()
+
+    def _on_update_downloaded(self, setup_path: str) -> None:
+        from ..updater import apply_update_and_quit
+        from PySide6.QtWidgets import QApplication
+
+        self.update_status.setText("安装中，应用即将重启…")
+        app = QApplication.instance()
+        quit_cb = getattr(app, "request_quit", app.quit)
+        apply_update_and_quit(setup_path, quit_cb)
 
     def _on_preset_changed(self) -> None:
         key = self.preset_combo.currentData()

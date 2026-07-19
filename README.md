@@ -16,7 +16,7 @@
 
 ## 下载安装（推荐）
 
-到 [Releases](../../releases) 下载：
+官网直接下载：**https://translate.ivyea.com**（或到 [Releases](../../releases)）：
 
 - **IvyeaTranslate-Setup.exe** —— 安装版：向导安装、开始菜单+桌面快捷方式、可卸载（装到当前用户目录，无需管理员）
 - **IvyeaTranslate.exe** —— 单文件便携版：免安装双击即用，首次启动解压慢几秒
@@ -25,6 +25,15 @@
 - 全局快捷键用系统原生 RegisterHotKey 注册，若与其他软件冲突，设置页「状态」会红字提示具体哪条失败，改个组合键保存即可
 - 对以管理员权限运行的窗口取词/热键无效（Windows 安全机制），需要的话以管理员身份运行本软件
 - 排查问题看日志：`%USERPROFILE%\.ivyea-translate\app.log`
+
+## 自动更新
+
+安装版应用启动后会静默检查更新（源：`https://translate.ivyea.com/download/version.json`），
+发现新版会在托盘提示，设置页「关于与更新」一键完成：下载（带进度）→ 静默安装 → 自动重启。
+便携版会引导到官网下载新版。可在配置里关闭 `update.auto_check`。
+
+发版流程（维护者）：推 `v*` tag → GitHub Actions 云端构建并挂 Release →
+服务器 cron（每 20 分钟，`deploy/sync-release.sh`）自动把 exe 同步到官网下载目录并刷新 version.json。
 
 ## 源码运行（Windows，Python 3.9+）
 

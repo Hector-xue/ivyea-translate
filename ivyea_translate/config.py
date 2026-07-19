@@ -104,6 +104,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "popup_width": 520,
         "history_limit": 100,
     },
+    "update": {
+        "auto_check": True,
+        "feed_url": "https://translate.ivyea.com/download/version.json",
+    },
 }
 
 
