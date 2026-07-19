@@ -5,7 +5,7 @@
   --ink: #2E3A28;
   --ink-2: #5C6B54;
   --ink-3: #93A388;
-  --card: rgba(252, 253, 248, 0.82);
+  --card: rgba(255, 255, 255, 0.72);
   --card-line: rgba(255, 255, 255, 0.9);
   --radius: 20px;
 }
@@ -14,18 +14,18 @@
 
 html { scroll-behavior: smooth; }
 
-html { background: #6E5548; }
+html { background: #FBFDF7; }
 
 body {
   font-family: "PingFang SC", "Microsoft YaHei UI", "Noto Sans CJK SC", "Segoe UI", sans-serif;
   color: var(--ink);
-  /* 青灰古城墙全强度打底（公有领域照片调色），只做摄影式暗角与顶光塑造纵深，
-     不加蒙版——墙就是场景本身，藤长在墙上，文字浮在墙前 */
+  /* 清新浅绿渐变 + 极细噪点纹理增加质感（无照片），顶部柔和光晕 */
   background:
-    radial-gradient(130% 110% at 50% 28%, rgba(26, 16, 10, 0) 50%, rgba(26, 16, 10, 0.45) 100%),
-    linear-gradient(180deg, rgba(255, 244, 224, 0.10) 0%, rgba(255, 244, 224, 0) 32%, rgba(20, 12, 8, 0.18) 100%),
-    url("../assets/wall.jpg") center / cover no-repeat;
-  background-attachment: fixed, fixed, fixed;
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0.25 0 0 0 0 0.35 0 0 0 0 0.2 0 0 0 0.045 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E"),
+    radial-gradient(900px 520px at 50% -6%, rgba(255, 253, 240, 0.85), transparent 70%),
+    radial-gradient(1200px 700px at 82% 4%, rgba(107, 165, 63, 0.10), transparent 62%),
+    linear-gradient(160deg, #F0F6E8 0%, #FBFDF7 46%, #E3EFD7 100%);
+  background-attachment: fixed, fixed, fixed, fixed;
   min-height: 100vh;
   overflow-x: hidden;
 }
@@ -51,21 +51,18 @@ header.nav {
 }
 .brand {
   display: flex; align-items: center; gap: 10px;
-  text-decoration: none; color: #F5F3EA;
-  text-shadow: 0 1px 6px rgba(20, 26, 18, 0.5);
+  text-decoration: none; color: var(--ink);
   font-weight: 700; font-size: 17px; letter-spacing: 0.2px;
 }
 header.nav nav { display: flex; gap: clamp(14px, 3vw, 30px); align-items: center; }
 header.nav nav a {
-  color: rgba(245, 243, 234, 0.88); text-decoration: none; font-size: 14.5px;
-  text-shadow: 0 1px 4px rgba(20, 26, 18, 0.5);
+  color: var(--ink-2); text-decoration: none; font-size: 14.5px;
   transition: color 0.2s;
 }
-header.nav nav a:hover { color: #CFE8AE; }
+header.nav nav a:hover { color: var(--accent-deep); }
 header.nav nav a.gh {
-  border: 1px solid rgba(245, 243, 234, 0.45);
+  border: 1px solid rgba(107, 165, 63, 0.4);
   padding: 6px 14px; border-radius: 999px;
-  background: rgba(30, 36, 30, 0.18);
 }
 
 /* ---------- Hero ---------- */
@@ -84,8 +81,6 @@ header.nav nav a.gh {
   font-weight: 700;
   line-height: 1.18;
   letter-spacing: 2px;
-  color: #F5F3EA;
-  text-shadow: 0 2px 30px rgba(15, 22, 14, 0.55), 0 1px 4px rgba(15, 22, 14, 0.45);
   animation: rise-in 0.9s cubic-bezier(0.22, 0.9, 0.3, 1) both;
 }
 .hero .sub { animation: rise-in 0.9s 0.15s cubic-bezier(0.22, 0.9, 0.3, 1) both; }
@@ -100,15 +95,17 @@ header.nav nav a.gh {
 }
 .hero h1 em {
   font-style: normal;
-  color: #B7E086;  /* 亮叶绿实色：裁切渐变会吃掉投影，在石墙上读不清 */
-  text-shadow: 0 2px 30px rgba(15, 22, 14, 0.6), 0 1px 4px rgba(15, 22, 14, 0.5);
+  color: var(--accent-deep);
+  background: linear-gradient(120deg, #7FB250, #4D802F);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 .hero .sub {
   margin-top: 22px;
   font-size: clamp(15px, 2.2vw, 19px);
   line-height: 1.9;
-  color: #E9EBDE;
-  text-shadow: 0 1px 10px rgba(15, 22, 14, 0.55);
+  color: var(--ink-2);
 }
 .cta { margin-top: 38px; display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
 .btn {
@@ -150,7 +147,7 @@ header.nav nav a.gh {
 .scroll-cue {
   position: absolute; bottom: 26px; left: 50%;
   transform: translateX(-50%);
-  color: rgba(245, 243, 234, 0.75); text-decoration: none; font-size: 20px;
+  color: var(--ink-3); text-decoration: none; font-size: 20px;
   animation: bob 2s ease-in-out infinite;
 }
 @keyframes bob { 50% { transform: translate(-50%, 8px); } }
@@ -180,8 +177,6 @@ section h2 {
   font-size: clamp(28px, 4.4vw, 42px);
   margin-bottom: 46px;
   letter-spacing: 1px;
-  color: #F5F3EA;
-  text-shadow: 0 2px 18px rgba(15, 22, 14, 0.55), 0 1px 3px rgba(15, 22, 14, 0.4);
 }
 .features { padding: 60px clamp(20px, 5vw, 64px) 30px; max-width: 1150px; margin: 0 auto; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 22px; }
@@ -206,7 +201,7 @@ section h2 {
   gap: 14px;
 }
 .cell {
-  background: rgba(252, 253, 248, 0.72);
+  background: rgba(255, 255, 255, 0.55);
   border: 1px solid rgba(255, 255, 255, 0.75);
   border-radius: 14px;
   padding: 16px 20px;
@@ -218,8 +213,7 @@ section h2 {
 /* ---------- 常春藤隐喻 ---------- */
 .lifecycle { padding: 90px 20px 70px; text-align: center; }
 .lifecycle .lead {
-  color: #E3E7D6;
-  text-shadow: 0 1px 8px rgba(15, 22, 14, 0.5); line-height: 2.05; font-size: 15.5px;
+  color: var(--ink-2); line-height: 2.05; font-size: 15.5px;
   max-width: 720px; margin: -18px auto 44px;
 }
 .stages {
@@ -257,13 +251,13 @@ section h2 {
 }
 .dl-card h3 { font-size: 20px; }
 .dl-card p { color: var(--ink-2); font-size: 13.5px; margin: 10px 0 22px; line-height: 1.7; }
-.req { margin-top: 30px; color: #D8DDCB; font-size: 13px; text-shadow: 0 1px 6px rgba(15, 22, 14, 0.5); }
-.req a { color: #BCD9A0; }
+.req { margin-top: 30px; color: var(--ink-3); font-size: 13px; }
+.req a { color: var(--accent-deep); }
 
 /* ---------- 页脚 ---------- */
 footer {
-  border-top: 1px solid rgba(245, 243, 234, 0.2);
-  background: rgba(250, 252, 246, 0.78);
+  border-top: 1px solid rgba(107, 165, 63, 0.18);
+  background: rgba(255, 255, 255, 0.45);
   backdrop-filter: blur(8px);
 }
 .foot-inner {
