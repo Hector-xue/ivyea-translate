@@ -21,22 +21,42 @@
 
   var DPR = Math.min(window.devicePixelRatio || 1, 2);
   var W = 0, H = 0;
+  var MOBILE = Math.min(window.innerWidth, window.innerHeight) < 620 || "ontouchstart" in window;
 
   // ---- 调参区 ----
   var STEP = 2.4;              // 每段长度(px)
-  var MAX_TIPS = 34;           // 同时生长的藤尖上限
-  var MAX_SEGMENTS = 52000;    // 总段数上限（防过度覆盖）
-  var LEAF_EVERY = [7, 11];    // 每隔几段长一片叶
+  var MAX_TIPS = MOBILE ? 16 : 34;   // 同时生长的藤尖上限
+  var MAX_SEGMENTS = MOBILE ? 24000 : 52000;
+  var LEAF_EVERY = [8, 13];    // 每隔几段长一片叶
   var LEAF_LIVE_S = 6.5;       // 新叶动画期（之后烘焙定型）
-  var ATTRACT_R = 240;         // 光标趋光半径
+  var ATTRACT_R = MOBILE ? 160 : 240; // 光标趋光半径
   var DWELL_MS = 260;          // 悬停多久种新芽
   var VINE_LIFE = [260, 560];  // 单藤段数寿命
   var BERRY_CHANCE = 0.38;     // 成熟藤结浆果概率
+  var LEAF_SCALE = MOBILE ? 0.8 : 1;
 
-  // 生长阶段配色（嫩 -> 深）
-  var STEM_YOUNG = [156, 192, 105];
-  var STEM_MID = [104, 150, 70];
-  var STEM_WOODY = [122, 104, 79];
+  // ---- 真实叶片精灵（公有领域扫描图裁切，见 assets/leaves/）----
+  // ax/ay = 叶柄末端锚点在图内的比例坐标；lobed = 五裂幼叶
+  var SPRITE_META = [
+    { file: "assets/leaves/leaf_s0.png", ax: 0.2573, ay: 0.9994, lobed: false },
+    { file: "assets/leaves/leaf_s1.png", ax: 0.3745, ay: 0.9992, lobed: true },
+    { file: "assets/leaves/leaf_s2.png", ax: 0.1363, ay: 0.9992, lobed: false },
+    { file: "assets/leaves/leaf_s3.png", ax: 0.7115, ay: 0.9990, lobed: false },
+  ];
+  // 叶龄 4 档色调（canvas filter）：初展亮黄绿 -> 成熟深绿
+  var TINT_FILTERS = [
+    "brightness(1.45) saturate(0.85) hue-rotate(14deg)",
+    "brightness(1.22) saturate(0.95) hue-rotate(6deg)",
+    "none",
+    "brightness(0.88) saturate(1.08)",
+  ];
+  var sprites = [];        // [{meta, variants: [canvas×4], w, h}]
+  var spritesReady = false;
+
+  // 生长阶段配色（嫩 -> 深，取自真实叶片色域）
+  var STEM_YOUNG = [143, 176, 94];
+  var STEM_MID = [94, 127, 66];
+  var STEM_WOODY = [110, 91, 68];
   var LEAF_STAGES = [
     [176, 212, 122],   // 初展嫩叶
     [136, 184, 88],
@@ -124,9 +144,13 @@
       if (nx < -30 || nx > W + 30 || ny < -30 || ny > H + 30 || densityAt(nx, ny) > 26) {
         finishVine(v); return false;
       }
-      // 画茎（烘焙层）：颜色随藤龄从嫩绿过渡
+      // 画茎（烘焙层）：颜色随藤龄从嫩绿过渡，带细投影贴墙感
       var t = v.age / v.life;
       var col = t < 0.55 ? mix(STEM_YOUNG, STEM_MID, t / 0.55) : STEM_MID;
+      bctx.save();
+      bctx.shadowColor = "rgba(45, 62, 35, 0.28)";
+      bctx.shadowBlur = 1.5;
+      bctx.shadowOffsetY = 1;
       bctx.strokeStyle = rgba(col, 0.95);
       bctx.lineWidth = Math.max(0.7, v.thickness * (1 - t * 0.6));
       bctx.lineCap = "round";
@@ -134,6 +158,7 @@
       bctx.moveTo(v.x, v.y);
       bctx.lineTo(nx, ny);
       bctx.stroke();
+      bctx.restore();
       v.x = nx; v.y = ny;
       v.path.push([nx, ny]);
       v.age++; totalSegments++;
@@ -186,17 +211,55 @@
     }
   }
 
+  // ---- 叶片精灵加载与调色预烘焙 ----
+  function loadSprites(done) {
+    var pending = SPRITE_META.length;
+    var ok = true;
+    SPRITE_META.forEach(function (meta, idx) {
+      var img = new Image();
+      img.onload = function () {
+        var variants = [];
+        for (var t = 0; t < TINT_FILTERS.length; t++) {
+          var c = document.createElement("canvas");
+          c.width = img.naturalWidth;
+          c.height = img.naturalHeight;
+          var cc = c.getContext("2d");
+          if (TINT_FILTERS[t] !== "none" && "filter" in cc) cc.filter = TINT_FILTERS[t];
+          cc.drawImage(img, 0, 0);
+          variants.push(c);
+        }
+        sprites[idx] = { meta: meta, variants: variants, w: img.naturalWidth, h: img.naturalHeight };
+        if (--pending === 0) done(ok);
+      };
+      img.onerror = function () {
+        ok = false;
+        if (--pending === 0) done(ok);
+      };
+      img.src = meta.file;
+    });
+  }
+
+  function pickSpriteIdx(adult) {
+    // 真实规律：幼藤长五裂幼叶为主，老藤长全缘卵形叶
+    if (!adult) {
+      return Math.random() < 0.7 ? 1 : [0, 2, 3][irand(0, 2)];
+    }
+    return [0, 2, 3][irand(0, 2)];
+  }
+
   // ---- 叶 ----
   function spawnLeaf(v) {
     var t = v.age / v.life;
     liveLeaves.push({
       x: v.x, y: v.y,
       angle: v.heading + v.side * rand(0.9, 1.5),
-      size: rand(12, 19) * (1 - t * 0.25) * (v.gen > 0 ? 0.85 : 1),
+      size: rand(34, 58) * LEAF_SCALE * (1 - t * 0.25) * (v.gen > 0 ? 0.85 : 1),
       birth: performance.now(),
       phase: rand(0, Math.PI * 2),
       adult: t > 0.72,          // 老藤上的叶：成熟全缘叶，更深绿
       maturity: t,
+      spriteIdx: pickSpriteIdx(t > 0.72),
+      flip: Math.random() < 0.5,
     });
   }
 
@@ -232,35 +295,51 @@
   }
 
   function drawLeaf(c, leaf, scale, sway) {
+    if (spritesReady && sprites[leaf.spriteIdx]) {
+      drawLeafSprite(c, leaf, scale, sway);
+      return;
+    }
+    drawLeafVector(c, leaf, scale, sway);
+  }
+
+  // 真实叶片精灵渲染：叶柄末端锚点贴在藤节点上，精灵"上方向"对准外向角，色调随叶龄
+  function drawLeafSprite(c, leaf, scale, sway) {
+    var sp = sprites[leaf.spriteIdx];
+    var tintIdx = leaf.adult ? 3 : Math.min(3, Math.floor((leaf.maturity + 0.18) * 3.2));
+    var img = sp.variants[tintIdx] || sp.variants[2];
+    var h = leaf.size * scale;
+    if (h < 1) return;
+    var w = h * (sp.w / sp.h);
     c.save();
     c.translate(leaf.x, leaf.y);
     c.rotate(leaf.angle + Math.PI / 2 + sway);
-    // 叶柄
+    if (leaf.flip) c.scale(-1, 1);  // 绕锚点竖轴镜像，锚点位置不变
+    c.shadowColor = "rgba(45, 62, 35, 0.30)";
+    c.shadowBlur = 3;
+    c.shadowOffsetX = 1;
+    c.shadowOffsetY = 2;
+    c.drawImage(img, -sp.meta.ax * w, -sp.meta.ay * h, w, h);
+    c.restore();
+  }
+
+  // 矢量兜底（精灵加载失败时）
+  function drawLeafVector(c, leaf, scale, sway) {
+    c.save();
+    c.translate(leaf.x, leaf.y);
+    c.rotate(leaf.angle + Math.PI / 2 + sway);
     var col = leaf.adult ? LEAF_ADULT : leafColor(Math.min(1, leaf.maturity + 0.15));
+    var s = leaf.size * 0.34;  // 矢量叶用旧尺度
     c.strokeStyle = rgba(mix(col, STEM_MID, 0.4), 0.9);
     c.lineWidth = 1;
     c.beginPath();
     c.moveTo(0, 0);
-    c.lineTo(0, leaf.size * 0.30 * scale);
+    c.lineTo(0, s * 0.30 * scale);
     c.stroke();
-    c.translate(0, leaf.size * 0.30 * scale);
+    c.translate(0, s * 0.30 * scale);
     c.scale(scale, scale);
-    if (leaf.adult) adultLeafPath(c, leaf.size); else juvenileLeafPath(c, leaf.size);
+    if (leaf.adult) adultLeafPath(c, s); else juvenileLeafPath(c, s);
     c.fillStyle = rgba(col, 0.96);
     c.fill();
-    // 叶脉
-    c.strokeStyle = "rgba(255,255,255,0.30)";
-    c.lineWidth = 0.6;
-    c.beginPath();
-    c.moveTo(0, 0.04 * leaf.size);
-    c.lineTo(0, 0.92 * leaf.size);
-    if (!leaf.adult) {
-      c.moveTo(0, 0.08 * leaf.size); c.lineTo(0.50 * leaf.size, 0.12 * leaf.size);
-      c.moveTo(0, 0.08 * leaf.size); c.lineTo(-0.50 * leaf.size, 0.12 * leaf.size);
-      c.moveTo(0, 0.22 * leaf.size); c.lineTo(0.40 * leaf.size, 0.50 * leaf.size);
-      c.moveTo(0, 0.22 * leaf.size); c.lineTo(-0.40 * leaf.size, 0.50 * leaf.size);
-    }
-    c.stroke();
     c.restore();
   }
 
@@ -283,11 +362,16 @@
       c.strokeStyle = rgba(STEM_WOODY, 0.55);
       c.lineWidth = 0.7;
       c.beginPath(); c.moveTo(0, 0); c.lineTo(px, py); c.stroke();
-      // 浆果
-      c.fillStyle = rgba(BERRY, 0.95);
-      c.beginPath(); c.arc(px, py, 2.3 * scale, 0, Math.PI * 2); c.fill();
-      c.fillStyle = "rgba(255,255,255,0.35)";
-      c.beginPath(); c.arc(px - 0.7 * scale, py - 0.7 * scale, 0.6 * scale, 0, Math.PI * 2); c.fill();
+      // 浆果：径向渐变出球体感
+      var rr = 2.6 * scale;
+      var grad = c.createRadialGradient(px - rr * 0.35, py - rr * 0.35, rr * 0.15, px, py, rr);
+      grad.addColorStop(0, "rgba(96, 88, 118, 1)");
+      grad.addColorStop(0.55, rgba(BERRY, 1));
+      grad.addColorStop(1, "rgba(30, 26, 42, 1)");
+      c.fillStyle = grad;
+      c.beginPath(); c.arc(px, py, rr, 0, Math.PI * 2); c.fill();
+      c.fillStyle = "rgba(255,255,255,0.45)";
+      c.beginPath(); c.arc(px - rr * 0.35, py - rr * 0.4, rr * 0.22, 0, Math.PI * 2); c.fill();
     }
     c.restore();
   }
@@ -444,7 +528,7 @@
     spawnVine(-6, rand(H * 0.4, H * 0.8), rand(-0.5, 0.2), 0);
     spawnVine(W + 6, rand(H * 0.4, H * 0.8), Math.PI + rand(-0.2, 0.5), 0);
     var simMatch = location.search.match(/ivysim=(\d+)/);
-    preGrow(simMatch ? parseInt(simMatch[1], 10) : 240);
+    preGrow(simMatch ? parseInt(simMatch[1], 10) : (MOBILE ? 150 : 240));
     if (reduced) {
       // 无障碍：一次性静态长成，不跑动画不监听鼠标
       pointer.x = -1e4; pointer.y = -1e4;
@@ -458,6 +542,10 @@
       ctx.clearRect(0, 0, W, H);
       ctx.drawImage(baked, 0, 0, W, H);
       return;
+    }
+    if (MOBILE) {
+      var hintEl = document.getElementById("ivy-hint");
+      if (hintEl) hintEl.textContent = "触摸屏幕让常春藤生长 · 点按爆发";
     }
     var evMove = window.PointerEvent ? "pointermove" : "mousemove";
     var evDown = window.PointerEvent ? "pointerdown" : "mousedown";
@@ -485,9 +573,17 @@
     }, 400);
   }
 
+  function boot() {
+    // 先加载真实叶片精灵再开始生长；加载失败退回矢量叶
+    loadSprites(function (ok) {
+      spritesReady = ok && sprites.length === SPRITE_META.length && sprites.every(Boolean);
+      init();
+    });
+  }
+
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
+    document.addEventListener("DOMContentLoaded", boot);
   } else {
-    init();
+    boot();
   }
 })();

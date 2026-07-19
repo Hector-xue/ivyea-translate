@@ -65,6 +65,7 @@ header.nav nav a.gh {
 /* ---------- Hero ---------- */
 .hero {
   min-height: calc(100vh - 78px);
+  min-height: calc(100svh - 78px);  /* 移动端地址栏收放不跳动 */
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
   text-align: center;
@@ -257,7 +258,47 @@ footer a { color: var(--ink-2); text-decoration: none; font-size: 13.5px; }
 footer a:hover { color: var(--accent-deep); }
 .copy { color: var(--ink-3); font-size: 12.5px; }
 
-@media (max-width: 640px) {
-  .shot.popup { position: static; width: 70%; margin: 14px auto 0; display: block; }
-  .hero h1 { letter-spacing: 0; }
+/* ---------- 移动端 ---------- */
+@media (max-width: 720px) {
+  header.nav { padding: 14px 18px; }
+  .brand span { font-size: 15px; }
+  .brand img { width: 28px; height: 28px; }
+  header.nav nav { gap: 14px; }
+  header.nav nav a { font-size: 13px; }
+  header.nav nav a.gh { padding: 5px 12px; }
+
+  .hero { padding: 0 22px 48px; }
+  .hero h1 { letter-spacing: 0; font-size: clamp(38px, 11vw, 54px); }
+  .hero .sub { font-size: 14.5px; line-height: 1.85; margin-top: 16px; }
+  .cta { margin-top: 30px; flex-direction: column; width: 100%; max-width: 320px; }
+  .cta .btn { width: 100%; text-align: center; padding: 15px 0; }
+  .hint { margin-top: 34px; font-size: 12px; padding: 7px 14px; }
+  .scroll-cue { display: none; }
+
+  .showcase { padding: 20px 16px 56px; }
+  .shot.popup { position: static; width: 78%; margin: 14px auto 0; display: block; }
+
+  section h2 { margin-bottom: 30px; }
+  .features { padding: 40px 18px 20px; }
+  .card { padding: 24px 20px; }
+  .grid { grid-template-columns: 1fr; }
+
+  .lifecycle { padding: 60px 18px 46px; }
+  .lifecycle .lead { font-size: 14px; line-height: 1.95; }
+  .lifecycle .lead br { display: none; }
+  .stages { gap: 8px; }
+  .stage { min-width: 0; flex: 1 1 40%; padding: 14px 10px; }
+  .arrow { display: none; }
+
+  .download { padding: 40px 18px 80px; }
+  .dl-card { padding: 26px 22px; }
+  .dl-card .btn { display: block; text-align: center; word-break: break-all; }
+  .req { font-size: 12px; padding: 0 10px; }
+
+  .foot-inner { flex-direction: column; text-align: center; padding: 22px 18px; }
+}
+
+@media (max-width: 420px) {
+  header.nav nav a:not(.gh) { display: none; }  /* 极窄屏只留 GitHub 按钮 */
+  .stage { flex: 1 1 44%; }
 }
