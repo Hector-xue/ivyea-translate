@@ -93,26 +93,18 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "tone": "business",
     },
     "hotkeys": {
-        # pynput 风格语法；主键靠左手区，顺手
-        "select_translate": "<ctrl>+<alt>+x",
+        # 仅截图翻译需要全局热键；划词翻译走"连按两次 Ctrl+C"，无需热键
         "screenshot_translate": "<ctrl>+<alt>+s",
     },
     "double_copy": {
-        # 连按两次 Ctrl+C 触发划词翻译（DeepL 式），无需注入按键最可靠
+        # 连按两次 Ctrl+C 触发划词翻译，无需注入按键最可靠
         "enabled": True,
         "window_ms": 700,
-    },
-    "clipboard_watch": {
-        "enabled": False,
         "max_chars": 3000,
     },
     "screenshot": {
         # 截图翻译目标语言；空 = 跟随全局 translate.target_language
         "target_language": "",
-    },
-    "selection_bubble": {
-        # 划词后光标旁弹出小图标，点击即翻译（仅 Windows）
-        "enabled": True,
     },
     "ui": {
         "popup_width": 520,
@@ -169,11 +161,15 @@ class Config:
         if ui.get("popup_width") == 420:
             ui["popup_width"] = DEFAULT_CONFIG["ui"]["popup_width"]
         hk = self._data.get("hotkeys", {})
-        # v0.4 以前默认 <ctrl>+<alt>+t 太远；等于旧默认视为未自定义
-        if hk.get("select_translate") == "<ctrl>+<alt>+t":
-            hk["select_translate"] = DEFAULT_CONFIG["hotkeys"]["select_translate"]
-        # 呼出主窗口快捷键已移除（任务栏/托盘点击即可）
+        # 已移除的快捷键/功能：清掉老配置里的残留键，避免误导
         hk.pop("show_main_window", None)
+        hk.pop("select_translate", None)   # v0.7 起划词走双击 Ctrl+C，不再用热键
+        self._data.pop("selection_bubble", None)  # 划词气泡已删除
+        # clipboard_watch(复制翻译)已删除；把老的 max_chars 迁到 double_copy。
+        # 老配置必无 double_copy（是本版新增），故直接赋值即可保留用户自定义值。
+        cw = self._data.pop("clipboard_watch", None)
+        if isinstance(cw, dict) and "max_chars" in cw:
+            self._data.setdefault("double_copy", {})["max_chars"] = cw["max_chars"]
 
     def save(self) -> None:
         with self._lock:

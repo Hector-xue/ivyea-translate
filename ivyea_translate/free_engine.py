@@ -1,19 +1,23 @@
 """内置免费翻译引擎：无需任何 Key，开箱即用。
 
-内置两个公开端点，按顺序自动回退（不同网络环境各有可用的）：
-  1. Google gtx（translate.googleapis.com）——无 token，纯 GET，最简单
-  2. 必应网页接口（bing.com）——国内可直连
+内置三个公开端点，按质量排序并带熔断回退（不同网络环境各有可用的）：
+  1. DeepL（keyless jsonrpc）——质量最好，但对数据中心 IP 限流较凶（首个请求常成功，
+     随后 429）。故作"有则更好"的首选，失败即进入冷却，不拖慢后续翻译。
+  2. Google gtx（translate.googleapis.com）——无 token，纯 GET，最稳。
+  3. 必应网页接口（bing.com）——国内可直连。
 
-FreeEngine 记住上次成功的端点优先用；都失败才报错并建议配置大模型。
+FreeEngine 记住上次成功端点优先用；失败端点进入冷却期跳过；全部冷却时仍兜底重试。
 免费引擎不支持"风格"（美式/正式等），风格仅大模型引擎生效。
 """
 from __future__ import annotations
 
+import json
 import logging
+import random
 import re
 import threading
 import time
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -24,9 +28,15 @@ log = logging.getLogger(__name__)
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
 
-MAX_CHUNK = 900  # 单次请求字符上限
+MAX_CHUNK = 900          # 单次请求字符上限
+COOLDOWN_S = 600         # 端点失败后的冷却时长（秒）
 
 # 应用语言码 -> 各服务语言码
+DEEPL_LANG: Dict[str, str] = {
+    "zh-CN": "ZH", "en": "EN", "ja": "JA", "ko": "KO", "fr": "FR",
+    "de": "DE", "es": "ES", "ru": "RU", "pt": "PT", "it": "IT",
+    # DeepL 不支持 zh-TW/ar/vi/th 或支持不稳，留给 Google/Bing
+}
 GOOGLE_LANG: Dict[str, str] = {
     "zh-CN": "zh-CN", "zh-TW": "zh-TW", "en": "en", "ja": "ja", "ko": "ko",
     "fr": "fr", "de": "de", "es": "es", "ru": "ru", "pt": "pt", "it": "it",
@@ -66,7 +76,60 @@ def _client() -> httpx.Client:
     return httpx.Client(timeout=15.0, follow_redirects=True, headers={"User-Agent": _UA})
 
 
+# ---------- DeepL（keyless jsonrpc，best-effort） ----------
+
+def _deepl_translate(text: str, target_language: str) -> str:
+    to_lang = DEEPL_LANG.get(target_language)
+    if not to_lang:
+        raise LLMError(f"DeepL 不支持目标语言 {target_language}")
+    out = []
+    with httpx.Client(timeout=5.0, headers={"User-Agent": _UA}) as c:
+        for chunk in split_for_translate(text):
+            out.append(_deepl_chunk(c, chunk, to_lang))
+    return "\n".join(out) if len(out) > 1 else out[0]
+
+
+def _deepl_chunk(client: httpx.Client, text: str, to_lang: str) -> str:
+    ts = int(time.time() * 1000)
+    i_count = text.count("i") + 1
+    ts = ts - (ts % i_count) + i_count  # 模仿浏览器：时间戳整除 i 计数
+    rid = random.randint(1_000_000, 9_999_999) * 1000
+    payload = {
+        "jsonrpc": "2.0", "method": "LMT_handle_texts", "id": rid,
+        "params": {
+            "texts": [{"text": text, "requestAlternatives": 0}],
+            "splitting": "newlines",
+            "lang": {"source_lang_user_selected": "auto", "target_lang": to_lang},
+            "timestamp": ts,
+            "commonJobParams": {"wasSpoken": False, "transcribe_as": ""},
+        },
+    }
+    body = json.dumps(payload, ensure_ascii=False)
+    spacing = '"method" : "' if ((rid + 5) % 29 == 0 or (rid + 3) % 13 == 0) else '"method": "'
+    body = body.replace('"method":"', spacing, 1)
+    resp = client.post(
+        "https://www2.deepl.com/jsonrpc",
+        content=body.encode("utf-8"),
+        headers={"Content-Type": "application/json",
+                 "Referer": "https://www.deepl.com/", "Origin": "https://www.deepl.com"},
+    )
+    if resp.status_code == 429:
+        raise LLMError("DeepL 限流")
+    resp.raise_for_status()
+    data = resp.json()
+    if "result" not in data:
+        raise LLMError("DeepL 返回异常")
+    return "".join(t["text"] for t in data["result"]["texts"])
+
+
 # ---------- Google gtx ----------
+
+def _google_translate(text: str, target_language: str) -> str:
+    to_lang = GOOGLE_LANG.get(target_language, target_language)
+    with _client() as c:
+        out = [_google_chunk(c, chunk, to_lang) for chunk in split_for_translate(text)]
+    return "\n".join(out) if len(out) > 1 else out[0]
+
 
 def _google_chunk(client: httpx.Client, text: str, to_lang: str) -> str:
     resp = client.get(
@@ -78,13 +141,6 @@ def _google_chunk(client: httpx.Client, text: str, to_lang: str) -> str:
     if not data or not data[0]:
         return ""
     return "".join(seg[0] for seg in data[0] if seg and seg[0])
-
-
-def _google_translate(text: str, target_language: str) -> str:
-    to_lang = GOOGLE_LANG.get(target_language, target_language)
-    with _client() as c:
-        out = [_google_chunk(c, chunk, to_lang) for chunk in split_for_translate(text)]
-    return "\n".join(out) if len(out) > 1 else out[0]
 
 
 # ---------- 必应 ----------
@@ -132,7 +188,7 @@ class _BingSession:
         resp.raise_for_status()
         data = resp.json()
         if isinstance(data, dict) and data.get("statusCode"):
-            self.token = None  # 票据失效
+            self.token = None
             raise LLMError("必应票据失效")
         return data[0]["translations"][0]["text"]
 
@@ -152,36 +208,52 @@ def _bing_translate(text: str, target_language: str) -> str:
     return "\n".join(out) if len(out) > 1 else out[0]
 
 
-# ---------- 组合引擎 ----------
+# ---------- 组合引擎（质量排序 + 熔断回退） ----------
 
-_ENGINES = [("google", _google_translate), ("bing", _bing_translate)]
+_ENGINES: List[Tuple[str, Callable[[str, str], str]]] = [
+    ("deepl", _deepl_translate),
+    ("google", _google_translate),
+    ("bing", _bing_translate),
+]
 
 
 class FreeEngine:
-    """双端点自动回退。记住上次成功端点优先用。"""
+    """多端点自动回退。首选上次成功端点；失败端点冷却期内跳过。"""
 
     is_free = True
 
     def __init__(self):
         self._lock = threading.Lock()
         self._preferred: Optional[str] = None
+        self._cooldown: Dict[str, float] = {}  # name -> 冷却结束时间戳
+
+    def _order(self, now: float) -> List[Tuple[str, Callable]]:
+        # 冷却中的端点排到最后（而非彻底剔除），保证全部冷却时仍有兜底
+        def keyfn(item):
+            name = item[0]
+            cooling = self._cooldown.get(name, 0) > now
+            return (cooling, name != self._preferred)
+        return sorted(_ENGINES, key=keyfn)
 
     def translate(self, text: str, target_language: str) -> str:
         if not text.strip():
             return ""
         with self._lock:
-            order = sorted(_ENGINES, key=lambda e: e[0] != self._preferred)
+            now = time.time()
             errors = []
-            for name, fn in order:
+            for name, fn in self._order(now):
                 try:
                     result = fn(text, target_language)
                     if result.strip():
                         self._preferred = name
+                        self._cooldown.pop(name, None)
                         log.info("免费引擎命中：%s", name)
                         return result
+                    raise LLMError("空结果")
                 except Exception as e:
+                    self._cooldown[name] = time.time() + COOLDOWN_S
                     errors.append(f"{name}:{e.__class__.__name__}")
-                    log.info("免费引擎 %s 失败：%s", name, e)
+                    log.info("免费引擎 %s 失败（冷却 %ds）：%s", name, COOLDOWN_S, e)
             raise LLMError("免费翻译暂不可用（" + " ".join(errors) + "），可在设置里配置大模型")
 
     def test_connection(self) -> str:

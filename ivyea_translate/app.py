@@ -12,9 +12,7 @@ from PySide6.QtCore import QLockFile, QObject, QRect, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from . import selection
 from .clipboard_watch import ClipboardWatcher
-from .selection_bubble import SelectionBubble, SelectionWatcher
 from .config import CONFIG_DIR, Config
 from .hotkeys import HotkeyManager
 from .llm import LLMError
@@ -49,10 +47,8 @@ def _make_icon() -> QIcon:
 
 
 class _Bridge(QObject):
-    """后台线程 -> 主线程的信号桥。"""
+    """后台线程 -> 主线程的信号桥（截图 OCR 用）。"""
 
-    selected_text_ready = Signal(str)
-    selection_empty = Signal()
     ocr_ready = Signal(str, QRect)   # 识别文本, 锚区域
     ocr_failed = Signal(str, QRect)
 
@@ -84,15 +80,11 @@ class TranslateApp(QApplication):
 
         self.cfg = Config()
         self.bridge = _Bridge()
-        self.bridge.selected_text_ready.connect(self._popup_translate_at_cursor)
-        self.bridge.selection_empty.connect(self._notify_no_selection)
         self.bridge.ocr_ready.connect(self._on_ocr_ready)
         self.bridge.ocr_failed.connect(self._on_ocr_failed)
 
-        self.watcher = ClipboardWatcher(max_chars=int(self.cfg.get("clipboard_watch.max_chars", 3000)))
-        self.watcher.set_enabled(bool(self.cfg.get("clipboard_watch.enabled", False)))
-        self.watcher.text_copied.connect(self._popup_translate_at_cursor)
-        # 双击 Ctrl+C 触发划词翻译（文本已在剪贴板，零注入最可靠）
+        # 划词翻译触发：连按两次 Ctrl+C（文本已在剪贴板，零注入最可靠）
+        self.watcher = ClipboardWatcher(max_chars=int(self.cfg.get("double_copy.max_chars", 3000)))
         self.watcher.double_copy_enabled = bool(self.cfg.get("double_copy.enabled", True))
         self.watcher.double_window_s = float(self.cfg.get("double_copy.window_ms", 700)) / 1000
         self.watcher.double_copied.connect(self._popup_translate_at_cursor)
@@ -102,22 +94,12 @@ class TranslateApp(QApplication):
 
         # 热键注册放在窗口之后，注册结果直接显示到设置页
         self.hotkeys = HotkeyManager()
-        self.hotkeys.select_translate.connect(self.trigger_select_translate)
         self.hotkeys.screenshot_translate.connect(self.trigger_screenshot_translate)
         self._register_hotkeys()
 
         self._popups: List[TranslationPopup] = []
         self._workers: List[TranslateWorker] = []
         self._overlay: Optional[CaptureOverlay] = None
-
-        # 划词气泡（DeepL 式）：划选/双击后光标旁出图标，点击即翻译
-        self.bubble = SelectionBubble()
-        self.bubble.clicked.connect(self.trigger_select_translate)
-        self.sel_watcher = SelectionWatcher()
-        self.sel_watcher.bubble_request.connect(self._on_bubble_request)
-        self.sel_watcher.set_enabled(
-            self.sel_watcher.available and bool(self.cfg.get("selection_bubble.enabled", True))
-        )
 
         self._setup_tray()
         ocr_engine.warmup_async()
@@ -149,11 +131,6 @@ class TranslateApp(QApplication):
         act_shot = QAction("截图翻译", menu)
         act_shot.triggered.connect(self.trigger_screenshot_translate)
         menu.addAction(act_shot)
-        self.act_watch = QAction("复制翻译", menu)
-        self.act_watch.setCheckable(True)
-        self.act_watch.setChecked(self.watcher.enabled)
-        self.act_watch.toggled.connect(self._toggle_watch)
-        menu.addAction(self.act_watch)
         menu.addSeparator()
         act_quit = QAction("退出", menu)
         act_quit.triggered.connect(self.request_quit)
@@ -168,67 +145,14 @@ class TranslateApp(QApplication):
 
     def _on_settings_saved(self) -> None:
         self._register_hotkeys()
-        self.watcher.max_chars = int(self.cfg.get("clipboard_watch.max_chars", 3000))
+        self.watcher.max_chars = int(self.cfg.get("double_copy.max_chars", 3000))
         self.watcher.double_copy_enabled = bool(self.cfg.get("double_copy.enabled", True))
-        enabled = bool(self.cfg.get("clipboard_watch.enabled", False))
-        self.watcher.set_enabled(enabled)
-        if self.tray:
-            self.act_watch.setChecked(enabled)
-        self.sel_watcher.set_enabled(
-            self.sel_watcher.available and bool(self.cfg.get("selection_bubble.enabled", True))
-        )
-
-    def _toggle_watch(self, on: bool) -> None:
-        self.watcher.set_enabled(on)
-        self.cfg.set("clipboard_watch.enabled", on)
-        self.cfg.save()
 
     def mark_own_copy(self, text: str) -> None:
-        """弹窗/主窗口'复制译文'时调用，防止复制翻译自触发。"""
+        """弹窗/主窗口'复制译文'时调用，防止双击复制被自家写入干扰。"""
         self.watcher.mark_own_copy(text)
 
-    # ---------- 划词翻译 ----------
-
-    def trigger_select_translate(self) -> None:
-        def work():
-            try:
-                text = selection.get_selected_text(pause_watch=self._pause_watch_threadsafe)
-            except Exception:
-                log.exception("取词流程异常")
-                text = None
-            if text:
-                self.bridge.selected_text_ready.emit(text)
-            else:
-                self.bridge.selection_empty.emit()
-
-        threading.Thread(target=work, daemon=True).start()
-
-    def _pause_watch_threadsafe(self, paused: bool) -> None:
-        # 只改标志位，线程安全足够
-        self.watcher._paused = paused
-
-    def _on_bubble_request(self, x: int, y: int) -> None:
-        """划词手势 -> 弹小气泡。在自家窗口上划选/截图框选中不弹。
-
-        注意：watcher 给的 x/y 是 Win32 物理像素；Qt 布窗用逻辑像素，
-        高 DPI 缩放屏上直接用会偏出很远。改用此刻的 QCursor.pos()（逻辑坐标，
-        手势刚松开光标就在选区旁）。"""
-        if self._overlay is not None:
-            return
-        from PySide6.QtCore import QPoint
-        from PySide6.QtGui import QCursor
-
-        pt = QCursor.pos()
-        for w in [self.window, self.bubble, *self._popups]:
-            if w is not None and w.isVisible() and w.frameGeometry().contains(pt):
-                return
-        self.bubble.pop_at(pt.x(), pt.y())
-
-    def _notify_no_selection(self) -> None:
-        if self.tray:
-            self.tray.showMessage("Ivyea Translate", "没有取到选中文字", QSystemTrayIcon.Information, 1500)
-
-    # ---------- 弹窗翻译（划词 / 复制共用） ----------
+    # ---------- 弹窗翻译（双击 Ctrl+C 触发） ----------
 
     def _popup_translate_at_cursor(self, text: str) -> None:
         popup = TranslationPopup(original=text, show_original=False,
@@ -349,7 +273,6 @@ class TranslateApp(QApplication):
         """唯一正确的退出入口：先放行主窗口的 close，再 quit。"""
         self.window.really_quit = True
         self.hotkeys.stop()
-        self.sel_watcher.stop()
         self.quit()
 
     # ---------- 主窗口 ----------

@@ -141,8 +141,7 @@ class MainWindow(QMainWindow):
         card_lay.addWidget(self.source_edit)
 
         btn_row = QHBoxLayout()
-        hint = QLabel("划词翻译 {sel} 或连按两次 Ctrl+C · 截图翻译 {shot}".format(
-            sel=self._pretty_hotkey(self.cfg.get("hotkeys.select_translate", "")),
+        hint = QLabel("选中文字后连按两次 Ctrl+C 即翻译 · 截图翻译 {shot}".format(
             shot=self._pretty_hotkey(self.cfg.get("hotkeys.screenshot_translate", "")),
         ))
         hint.setObjectName("Hint")
@@ -590,16 +589,14 @@ class MainWindow(QMainWindow):
         hk_form = QFormLayout()
         hk_form.setHorizontalSpacing(14)
         hk_form.setVerticalSpacing(10)
-        self.hk_select_edit = QLineEdit(self.cfg.get("hotkeys.select_translate", ""))
-        hk_form.addRow("划词翻译", self.hk_select_edit)
+        self.dblcopy_check = QCheckBox("选中文字后连按两次 Ctrl+C 即翻译")
+        self.dblcopy_check.setChecked(bool(self.cfg.get("double_copy.enabled", True)))
+        hk_form.addRow("划词翻译", self.dblcopy_check)
         self.hk_shot_edit = QLineEdit(self.cfg.get("hotkeys.screenshot_translate", ""))
-        hk_form.addRow("截图翻译", self.hk_shot_edit)
-        hk_hint = QLabel('格式如 <ctrl>+<alt>+x（尖括号包修饰键）')
+        hk_form.addRow("截图翻译快捷键", self.hk_shot_edit)
+        hk_hint = QLabel('格式如 <ctrl>+<alt>+s（尖括号包修饰键）')
         hk_hint.setObjectName("Hint")
         hk_form.addRow("", hk_hint)
-        self.dblcopy_check = QCheckBox("连按两次 Ctrl+C 触发划词翻译（推荐，最稳）")
-        self.dblcopy_check.setChecked(bool(self.cfg.get("double_copy.enabled", True)))
-        hk_form.addRow("", self.dblcopy_check)
         self.shot_lang_combo = QComboBox()
         self.shot_lang_combo.addItem("跟随全局目标语言", "")
         for code, label in LANGUAGES:
@@ -610,12 +607,6 @@ class MainWindow(QMainWindow):
         self.hotkey_status.setObjectName("Hint")
         self.hotkey_status.setWordWrap(True)
         hk_form.addRow("状态", self.hotkey_status)
-        self.watch_check = QCheckBox("开启复制翻译（复制任意文本后自动弹窗翻译）")
-        self.watch_check.setChecked(bool(self.cfg.get("clipboard_watch.enabled", False)))
-        hk_form.addRow("", self.watch_check)
-        self.bubble_check = QCheckBox("开启划词气泡（选中文字后光标旁出现图标，点击即翻译）")
-        self.bubble_check.setChecked(bool(self.cfg.get("selection_bubble.enabled", True)))
-        hk_form.addRow("", self.bubble_check)
         hc.addLayout(hk_form)
         lay.addWidget(hk_card)
 
@@ -771,12 +762,9 @@ class MainWindow(QMainWindow):
 
     def _on_save_settings(self) -> None:
         self._flush_provider_fields()
-        self.cfg.set("hotkeys.select_translate", self.hk_select_edit.text().strip())
         self.cfg.set("hotkeys.screenshot_translate", self.hk_shot_edit.text().strip())
         self.cfg.set("double_copy.enabled", self.dblcopy_check.isChecked())
         self.cfg.set("screenshot.target_language", self.shot_lang_combo.currentData())
-        self.cfg.set("clipboard_watch.enabled", self.watch_check.isChecked())
-        self.cfg.set("selection_bubble.enabled", self.bubble_check.isChecked())
         self.cfg.save()
         self.save_status.setText("已保存 ✓")
         from PySide6.QtCore import QTimer

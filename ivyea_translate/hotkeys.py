@@ -112,7 +112,6 @@ def parse_hotkey(combo: str) -> Tuple[int, int]:
 
 
 class HotkeyManager(QObject):
-    select_translate = Signal()
     screenshot_translate = Signal()
 
     def __init__(self, parent=None):
@@ -124,7 +123,6 @@ class HotkeyManager(QObject):
 
     def _signal_map(self) -> Dict[str, Signal]:
         return {
-            "select_translate": self.select_translate,
             "screenshot_translate": self.screenshot_translate,
         }
 

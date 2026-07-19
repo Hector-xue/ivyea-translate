@@ -7,7 +7,8 @@ def test_defaults_when_no_file(tmp_path):
     cfg = Config(tmp_path / "config.json")
     assert cfg.get("provider.preset") == "deepseek"
     assert cfg.get("translate.target_language") == "zh-CN"
-    assert cfg.get("hotkeys.select_translate") == "<ctrl>+<alt>+x"
+    assert cfg.get("hotkeys.screenshot_translate") == "<ctrl>+<alt>+s"
+    assert cfg.get("hotkeys.select_translate") is None  # 划词热键已删除
 
 
 def test_save_load_roundtrip(tmp_path):
@@ -29,7 +30,7 @@ def test_old_config_gains_new_default_keys(tmp_path):
     # 旧文件只有一个键，其余全部补默认
     assert cfg.get("provider.api_key") == "sk-old"
     assert cfg.get("provider.base_url") == DEFAULT_CONFIG["provider"]["base_url"]
-    assert cfg.get("clipboard_watch.max_chars") == 3000
+    assert cfg.get("double_copy.max_chars") == 3000
 
 
 def test_corrupt_config_falls_back_to_defaults(tmp_path):
