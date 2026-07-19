@@ -41,7 +41,8 @@
   var MAX_COHORTS = 4;              // 超过则最老世代入秋
   var COHORT_MAX_AGE_S = 70;        // 世代最长寿命（保证"终会消失"）
   if (location.search.indexOf("ivyfast") >= 0) COHORT_MAX_AGE_S = 7;  // 调试：加速轮回
-  var FALL_FADE_S = 2.2;            // 秋天淡出时长
+  var FALL_FADE_S = 1.3;            // 秋天淡出时长
+  var MAX_FALLING = 36;             // 同时飘落的叶数上限（防帧率崩）
   var MOTES = MOBILE ? 10 : 18;     // 常驻光尘数
 
   var STEM_YOUNG = [143, 176, 94];
@@ -146,17 +147,28 @@
   function startFall(co, now) {
     co.state = "fall";
     co.fallStart = now;
-    // 该世代的叶染秋色陆续飘落
-    var leaves = co.leaves;
-    for (var i = 0; i < leaves.length; i++) {
-      var rec = leaves[i];
+    // 该世代生长中的藤就地终止（避免半截藤跨层残留），动画期的叶直接转为落叶
+    for (var vi = vines.length - 1; vi >= 0; vi--) {
+      if (vines[vi].cohort === co) vines.splice(vi, 1);
+    }
+    var recs = co.leaves.slice();
+    for (var li = liveLeaves.length - 1; li >= 0; li--) {
+      if (liveLeaves[li].cohort === co) {
+        recs.push(liveLeaves[li]);
+        liveLeaves.splice(li, 1);
+      }
+    }
+    // 帧率保护：只取样一部分演飘落，其余随层淡出
+    while (recs.length > MAX_FALLING) recs.splice(irand(0, recs.length - 1), 1);
+    for (var i = 0; i < recs.length; i++) {
+      var rec = recs[i];
       fallingLeaves.push({
         x: rec.x, y: rec.y, size: rec.size,
         spriteIdx: rec.spriteIdx, flip: rec.flip,
-        angle: rec.angle, spin: rand(-1.6, 1.6),
-        vx: rand(-6, 6), vy: rand(6, 18),
+        angle: rec.angle, spin: rand(-2.4, 2.4),
+        vx: rand(-8, 8), vy: rand(14, 34),
         phase: rand(0, Math.PI * 2),
-        delay: rand(0, FALL_FADE_S * 0.8) * 1000,  // 错峰起飞
+        delay: rand(0, 700),  // 错峰起飞
         start: now, alpha: 1,
       });
     }
@@ -209,14 +221,20 @@
       var du = ((up - v.heading + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
       v.heading += v.curl + du * 0.006;
       var dx = pointer.x - v.x, dy = pointer.y - v.y;
-      if (dx * dx + dy * dy < ATTRACT_R * ATTRACT_R) {
+      if (v.follow) {
+        // 主藤：强力追随光标（保持一根连续的藤）
+        var angF = Math.atan2(dy, dx);
+        var daF = ((angF - v.heading + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+        v.heading += daF * 0.3;
+      } else if (dx * dx + dy * dy < ATTRACT_R * ATTRACT_R) {
         var ang = Math.atan2(dy, dx);
         var da = ((ang - v.heading + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
         v.heading += da * 0.045;
       }
       var nx = v.x + Math.cos(v.heading) * STEP;
       var ny = v.y + Math.sin(v.heading) * STEP;
-      if (nx < -30 || nx > W + 30 || ny < -30 || ny > H + 30 || densityAt(nx, ny) > 22) {
+      var denCap = v.follow ? 44 : 22;  // 主藤允许穿过较密区域，避免中断
+      if (nx < -30 || nx > W + 30 || ny < -30 || ny > H + 30 || densityAt(nx, ny) > denCap) {
         finishVine(v); return false;
       }
       var t = v.age / v.life;
@@ -335,7 +353,7 @@
     });
   }
 
-  function drawLeafSpriteAt(c, x, y, angle, size, spriteIdx, flip, tintIdx, alpha) {
+  function drawLeafSpriteAt(c, x, y, angle, size, spriteIdx, flip, tintIdx, alpha, noShadow) {
     var sp = sprites[spriteIdx];
     if (!sp || size < 1) return;
     var img = sp.variants[tintIdx] || sp.variants[2];
@@ -345,10 +363,12 @@
     c.translate(x, y);
     c.rotate(angle + Math.PI / 2);
     if (flip) c.scale(-1, 1);
-    c.shadowColor = "rgba(45, 62, 35, 0.30)";
-    c.shadowBlur = 3;
-    c.shadowOffsetX = 1;
-    c.shadowOffsetY = 2;
+    if (!noShadow) {
+      c.shadowColor = "rgba(45, 62, 35, 0.30)";
+      c.shadowBlur = 3;
+      c.shadowOffsetX = 1;
+      c.shadowOffsetY = 2;
+    }
     c.drawImage(img, -sp.meta.ax * w, -sp.meta.ay * h, w, h);
     c.restore();
   }
@@ -500,31 +520,38 @@
       var f = fallingLeaves[i];
       if (now - f.start < f.delay) continue;
       var k = dt / 1000;
-      f.vy = Math.min(70, f.vy + 40 * k);          // 重力（带终端速度）
-      f.x += (f.vx + Math.sin(now / 500 + f.phase) * 26) * k;  // 横摆
+      f.vy = Math.min(130, f.vy + 90 * k);         // 重力（带终端速度），干脆利落
+      f.x += (f.vx + Math.sin(now / 900 + f.phase) * 12) * k;  // 缓慢横摆
       f.y += f.vy * k;
       f.angle += f.spin * k;
-      if (f.y > H * 0.86) f.alpha -= 1.6 * k;      // 接近底部渐隐
+      if (f.y > H * 0.8) f.alpha -= 2.4 * k;       // 接近底部快速渐隐
       if (f.y > H + 40 || f.alpha <= 0) { fallingLeaves.splice(i, 1); continue; }
       if (spritesReady) {
-        drawLeafSpriteAt(ctx, f.x, f.y, f.angle, f.size, f.spriteIdx, f.flip, 4, f.alpha);
+        drawLeafSpriteAt(ctx, f.x, f.y, f.angle, f.size, f.spriteIdx, f.flip, 4, f.alpha, true);
       }
     }
   }
 
   // ---- 交互 ----
-  function trailBurst(x, y) {
-    var co = currentCohort();
-    // 即时嫩叶（先给到眼睛的反馈）
-    spawnLeaf(x + rand(-4, 4), y + rand(-4, 4), rand(0, Math.PI * 2), rand(0, 0.25), 0, co, rand(0.7, 1.0));
-    if (Math.random() < 0.6) {
-      spawnLeaf(x + rand(-10, 10), y + rand(-10, 10), rand(0, Math.PI * 2), rand(0, 0.3), 1, co, rand(0.55, 0.8));
+  // 划过 = 一根主藤连续跟随光标攀爬（而非一截截独立小芽）
+  var trailVine = null;
+  var trailIdleSince = 0;
+
+  function ensureTrailVine(x, y) {
+    if (trailVine && vines.indexOf(trailVine) >= 0) {
+      var dx = trailVine.x - x, dy = trailVine.y - y;
+      if (dx * dx + dy * dy < 300 * 300) return trailVine;  // 还跟得上
+      // 光标跳太远：旧主藤自然收尾，起新藤
+      trailVine.follow = false;
+      trailVine.life = Math.min(trailVine.life, trailVine.age + 40);
     }
-    // 微型藤芽随后长开
-    if (vines.length < MAX_TIPS) {
-      spawnVine(x, y, rand(0, Math.PI * 2), 1, irand(36, 90));
+    trailVine = spawnVine(x, y, rand(0, Math.PI * 2), 0, 900);
+    if (trailVine) {
+      trailVine.follow = true;
+      trailVine.leafGap = irand(6, 9);      // 主藤叶更密
+      trailVine.thickness = rand(2.4, 3.0);
     }
-    spawnSparks(x, y, MOBILE ? 3 : 5, 34);
+    return trailVine;
   }
 
   function onPointerMove(e) {
@@ -534,11 +561,12 @@
     var moved = Math.abs(x - pointer.lastX) + Math.abs(y - pointer.lastY);
     if (moved > 24) { pointer.stillSince = now; pointer.lastX = x; pointer.lastY = y; }
     pointer.x = x; pointer.y = y;
-    // 划过轨迹：每 TRAIL_GAP 像素冒一簇
     var tdx = x - pointer.trailX, tdy = y - pointer.trailY;
     if (tdx * tdx + tdy * tdy > TRAIL_GAP * TRAIL_GAP) {
       pointer.trailX = x; pointer.trailY = y;
-      if (densityAt(x, y) < 14) trailBurst(x, y);
+      trailIdleSince = now;
+      ensureTrailVine(x, y);
+      if (Math.random() < 0.5) spawnSparks(x, y, MOBILE ? 2 : 3, 26);
       hideHint();
     }
     // 停留：种一株完整的藤
@@ -579,12 +607,25 @@
     var dt = Math.min(50, now - lastFrame);
     lastFrame = now;
     updateCohorts(now);
+    // 主藤收尾：光标停下 2.2 秒后不再跟随
+    if (trailVine && now - trailIdleSince > 2200) {
+      trailVine.follow = false;
+      trailVine.life = Math.min(trailVine.life, trailVine.age + 50);
+      trailVine = null;
+    }
     var warm = Math.max(1, 3.2 - (now - started) / 1400);
     for (var i = vines.length - 1; i >= 0; i--) {
       var v = vines[i];
       var dx = pointer.x - v.x, dy = pointer.y - v.y;
-      var near = dx * dx + dy * dy < ATTRACT_R * ATTRACT_R;
-      stepVine(v, (near ? 2.6 : 1) * warm * 1.35 * (dt / 16.7));
+      var boost;
+      if (v.follow) {
+        // 主藤速度与光标距离挂钩：甩多快都追得上
+        boost = Math.min(8, Math.max(1.6, Math.sqrt(dx * dx + dy * dy) / 34)) * (dt / 16.7);
+      } else {
+        var near = dx * dx + dy * dy < ATTRACT_R * ATTRACT_R;
+        boost = (near ? 2.6 : 1) * warm * 1.35 * (dt / 16.7);
+      }
+      stepVine(v, boost);
     }
     ctx.clearRect(0, 0, W, H);
     // 世代层（老世代带淡出 alpha）
@@ -601,6 +642,8 @@
       if (age > LEAF_LIVE_S) {
         bakeLeaf(leaf);
         liveLeaves.splice(j, 1);
+        // 世代层本帧已合成，烘焙结果下一帧才可见——当帧补画一次防止闪烁
+        drawLeaf(ctx, leaf, 1, 0);
         continue;
       }
       var u = Math.min(1, age / 1.1);
