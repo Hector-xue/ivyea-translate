@@ -72,18 +72,32 @@ def normalize_feed(data: object) -> Optional[Dict]:
     }
 
 
+def _looks_installed(exe_path: Path, localappdata: str) -> bool:
+    """纯逻辑（可单测）：判断 exe 是否属于 Inno 安装版。
+
+    主判据：安装目录里有卸载器 unins*.exe（Inno 安装版必有，便携单文件版没有），
+    与安装位置无关，避免 LOCALAPPDATA 路径匹配 + resolve() 长路径前缀带来的误判。
+    兜底：exe 位于 LOCALAPPDATA 下。
+    """
+    exe_dir = exe_path.parent
+    try:
+        if any(exe_dir.glob("unins*.exe")):
+            return True
+    except OSError:
+        pass
+    if localappdata:
+        try:
+            return Path(localappdata).resolve() in exe_path.parents
+        except OSError:
+            return False
+    return False
+
+
 def is_installed_copy() -> bool:
-    """是否是安装版（PyInstaller 冻结且位于安装目录）。安装版才能静默升级。"""
+    """是否是安装版（PyInstaller 冻结 + Inno 安装目录）。安装版才能静默升级。"""
     if not getattr(sys, "frozen", False) or not _WINDOWS:
         return False
-    exe = Path(sys.executable).resolve()
-    localapp = os.environ.get("LOCALAPPDATA", "")
-    if not localapp:
-        return False
-    try:
-        return Path(localapp).resolve() in exe.parents
-    except OSError:
-        return False
+    return _looks_installed(Path(sys.executable).resolve(), os.environ.get("LOCALAPPDATA", ""))
 
 
 # ---------- 线程 ----------

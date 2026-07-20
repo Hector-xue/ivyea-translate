@@ -109,3 +109,25 @@ def test_checker_no_update_for_old_version(qapp):
         assert got.get("no") is True
     finally:
         srv.shutdown()
+
+
+def test_looks_installed_by_uninstaller(tmp_path):
+    """安装目录里有 unins*.exe -> 判为安装版（与位置无关）。"""
+    from ivyea_translate.updater import _looks_installed
+    exe = tmp_path / "IvyeaTranslate.exe"
+    exe.write_text("x")
+    # 无卸载器 + 不在 LOCALAPPDATA -> 便携
+    assert _looks_installed(exe, "") is False
+    # 放入 Inno 卸载器 -> 安装版
+    (tmp_path / "unins000.exe").write_text("x")
+    assert _looks_installed(exe, "") is True
+
+
+def test_looks_installed_by_localappdata(tmp_path):
+    from ivyea_translate.updater import _looks_installed
+    prog = tmp_path / "Local" / "Programs" / "IvyeaTranslate"
+    prog.mkdir(parents=True)
+    exe = prog / "IvyeaTranslate.exe"
+    exe.write_text("x")
+    assert _looks_installed(exe, str(tmp_path / "Local")) is True
+    assert _looks_installed(exe, str(tmp_path / "Other")) is False

@@ -69,8 +69,11 @@ jobs:
         shell: pwsh
         run: |
           Start-Process -FilePath dist\IvyeaTranslate-Setup.exe -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -Wait
-          $exe = "$env:LOCALAPPDATA\Programs\IvyeaTranslate\IvyeaTranslate.exe"
+          $installdir = "$env:LOCALAPPDATA\Programs\IvyeaTranslate"
+          $exe = "$installdir\IvyeaTranslate.exe"
           if (!(Test-Path $exe)) { throw "installed exe not found at $exe" }
+          # is_installed_copy() 依赖安装目录里的卸载器来判定"安装版"，缺了就会误判为便携版
+          if (!(Test-Path "$installdir\unins000.exe")) { throw "uninstaller missing -> update self-detect would fail" }
           $env:QT_QPA_PLATFORM = "offscreen"
           $env:IVYEA_TRANSLATE_HOME = "$env:RUNNER_TEMP\ivyea-smoke2"
           $p = Start-Process -FilePath $exe -PassThru
