@@ -83,7 +83,7 @@ def _deepl_translate(text: str, target_language: str) -> str:
     if not to_lang:
         raise LLMError(f"DeepL 不支持目标语言 {target_language}")
     out = []
-    with httpx.Client(timeout=5.0, headers={"User-Agent": _UA}) as c:
+    with httpx.Client(timeout=4.0, headers={"User-Agent": _UA}) as c:
         for chunk in split_for_translate(text):
             out.append(_deepl_chunk(c, chunk, to_lang))
     return "\n".join(out) if len(out) > 1 else out[0]
@@ -226,6 +226,15 @@ class FreeEngine:
         self._lock = threading.Lock()
         self._preferred: Optional[str] = None
         self._cooldown: Dict[str, float] = {}  # name -> 冷却结束时间戳
+
+    @property
+    def preferred(self) -> Optional[str]:
+        return self._preferred
+
+    @preferred.setter
+    def preferred(self, value: Optional[str]) -> None:
+        # 只接受已知端点名
+        self._preferred = value if value in {n for n, _ in _ENGINES} else None
 
     def _order(self, now: float) -> List[Tuple[str, Callable]]:
         # 冷却中的端点排到最后（而非彻底剔除），保证全部冷却时仍有兜底

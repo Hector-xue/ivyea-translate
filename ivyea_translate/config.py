@@ -121,6 +121,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "prompted_version": "",   # 已弹过更新提示的版本，避免每次启动都弹
     },
     "onboarded": False,  # 首次启动显示上手引导后置 True
+    "free_engine": {
+        "preferred": "",  # 记住上次命中的免费端点，下次优先用（免去 DeepL 首次重试等待）
+    },
 }
 
 

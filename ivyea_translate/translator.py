@@ -5,11 +5,30 @@ TranslateWorker 是 QThread 包装：流式增量经信号发给 UI 线程。
 """
 from __future__ import annotations
 
-from typing import Dict, List
+from collections import OrderedDict
+from typing import Dict, List, Optional, Tuple
 
 from PySide6.QtCore import QThread, Signal
 
 from .llm import LLMClient, LLMError
+
+# 翻译结果缓存（内存 LRU）：同一段文字重复翻译秒出、少发一次请求
+_CACHE: "OrderedDict[Tuple, str]" = OrderedDict()
+_CACHE_MAX = 300
+
+
+def cache_get(key: Tuple) -> Optional[str]:
+    if key in _CACHE:
+        _CACHE.move_to_end(key)
+        return _CACHE[key]
+    return None
+
+
+def cache_put(key: Tuple, value: str) -> None:
+    _CACHE[key] = value
+    _CACHE.move_to_end(key)
+    while len(_CACHE) > _CACHE_MAX:
+        _CACHE.popitem(last=False)
 
 # prompt 内用英文语言名，模型遵循度最好
 LANGUAGE_NAMES: Dict[str, str] = {
@@ -209,6 +228,19 @@ class TranslateWorker(QThread):
     def run(self) -> None:
         parts: List[str] = []
         try:
+            # 仅缓存普通翻译（定制 prompt 如邮件/详解一次性，不缓存）
+            key = None
+            if self._messages is None:
+                eng = "free" if getattr(self._client, "is_free", False) else \
+                    f"{getattr(self._client, 'base_url', '')}|{getattr(self._client, 'model', '')}"
+                key = (eng, self._target_language, self._style, self._text)
+                cached = cache_get(key)
+                if cached is not None:
+                    if self._cancelled:
+                        return
+                    self.chunk.emit(cached)
+                    self.finished_ok.emit(cached)
+                    return
             if self._messages is None and getattr(self._client, "is_free", False):
                 # 免费引擎：非流式，一次返回整段
                 result = self._client.translate(self._text, self._target_language)
@@ -216,6 +248,8 @@ class TranslateWorker(QThread):
                     return
                 self.chunk.emit(result)
                 self.finished_ok.emit(result)
+                if key:
+                    cache_put(key, result)
                 return
             messages = self._messages or build_messages(self._text, self._target_language, self._style)
             for piece in self._client.stream_chat(messages):
@@ -223,7 +257,10 @@ class TranslateWorker(QThread):
                     return
                 parts.append(piece)
                 self.chunk.emit(piece)
-            self.finished_ok.emit("".join(parts))
+            full = "".join(parts)
+            self.finished_ok.emit(full)
+            if key and full.strip():
+                cache_put(key, full)
         except LLMError as e:
             if not self._cancelled:
                 self.failed.emit(str(e))

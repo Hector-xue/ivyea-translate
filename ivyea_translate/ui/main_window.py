@@ -68,6 +68,9 @@ class MainWindow(QMainWindow):
         self._worker: Optional[TranslateWorker] = None
         self._history_path = cfg.path.parent / "history.json"
         self._history: List[dict] = self._load_history()
+        # (splitter, 结果区占比) —— 窗口显示后按真实高度设分割，避免 setSizes 早调用失效
+        self._splitters: List[tuple] = []
+        self._splits_applied = False
 
         self.setWindowTitle("Ivyea Translate")
         self.resize(820, 780)
@@ -198,6 +201,7 @@ class MainWindow(QMainWindow):
         split.setStretchFactor(1, 1)
         split.setSizes([250, 470])
         lay.addWidget(split, 1)
+        self._splitters.append((split, 0.55))  # 译文区约占 55%
 
         self.source_edit.installEventFilter(self)
         self._on_lang_style_changed()
@@ -394,6 +398,7 @@ class MainWindow(QMainWindow):
         res_lay.addLayout(body_head)
         self.email_body = QPlainTextEdit()
         self.email_body.setReadOnly(True)
+        self.email_body.setMinimumHeight(150)  # 防止被主题/回译挤成一两行
         self.email_body.setPlaceholderText("生成的地道外语会出现在这里")
         res_lay.addWidget(self.email_body, 1)
 
@@ -417,8 +422,9 @@ class MainWindow(QMainWindow):
         split.addWidget(result_card)
         split.setStretchFactor(0, 0)
         split.setStretchFactor(1, 1)
-        split.setSizes([240, 480])
+        split.setSizes([220, 500])
         lay.addWidget(split, 1)
+        self._splitters.append((split, 0.62))  # 结果区(正文+回译)约占 62%
         self._on_scenario_changed()
         return page
 
@@ -904,6 +910,22 @@ class MainWindow(QMainWindow):
         else:
             self.hotkey_status.setStyleSheet("color: #3AA675;")
             self.hotkey_status.setText("全局快捷键已生效")
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # 首次显示后再按真实高度设分割比例（此前 splitter 高度为 0，setSizes 不生效）
+        if not self._splits_applied:
+            self._splits_applied = True
+            from PySide6.QtCore import QTimer
+
+            QTimer.singleShot(0, self._apply_split_sizes)
+
+    def _apply_split_sizes(self) -> None:
+        for split, result_ratio in self._splitters:
+            h = split.height()
+            if h > 120:
+                top = int(h * (1 - result_ratio))
+                split.setSizes([top, h - top])
 
     # 关窗只是隐藏（常驻托盘）；退出流程中必须放行
     def closeEvent(self, event):

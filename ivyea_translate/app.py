@@ -79,6 +79,10 @@ class TranslateApp(QApplication):
         self.setWindowIcon(_make_icon())
 
         self.cfg = Config()
+        # 恢复上次命中的免费翻译端点，避免本次首译又从 DeepL 慢重试
+        from .free_engine import free_engine
+        free_engine.preferred = self.cfg.get("free_engine.preferred") or None
+
         self.bridge = _Bridge()
         self.bridge.ocr_ready.connect(self._on_ocr_ready)
         self.bridge.ocr_failed.connect(self._on_ocr_failed)
@@ -412,6 +416,14 @@ class TranslateApp(QApplication):
         """唯一正确的退出入口：先放行主窗口的 close，再 quit。"""
         self.window.really_quit = True
         self.hotkeys.stop()
+        # 记住本次命中的免费端点，下次启动优先用
+        try:
+            from .free_engine import free_engine
+            if free_engine.preferred:
+                self.cfg.set("free_engine.preferred", free_engine.preferred)
+                self.cfg.save()
+        except Exception:
+            pass
         self.quit()
 
     # ---------- 主窗口 ----------

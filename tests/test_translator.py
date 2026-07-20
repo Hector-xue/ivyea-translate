@@ -59,3 +59,24 @@ def test_source_text_stays_in_user_message():
     msgs = build_messages(evil, "zh-CN", "general")
     assert evil not in _system(msgs)
     assert msgs[1]["content"] == evil
+
+
+# ---------- 翻译结果缓存 ----------
+
+def test_translation_cache_roundtrip():
+    from ivyea_translate.translator import cache_get, cache_put, _CACHE
+    _CACHE.clear()
+    key = ("llm|m", "en", "general", "你好")
+    assert cache_get(key) is None
+    cache_put(key, "Hello")
+    assert cache_get(key) == "Hello"
+
+
+def test_translation_cache_lru_eviction():
+    from ivyea_translate.translator import cache_get, cache_put, _CACHE, _CACHE_MAX
+    _CACHE.clear()
+    for i in range(_CACHE_MAX + 10):
+        cache_put(("e", "en", "general", f"t{i}"), f"r{i}")
+    assert len(_CACHE) == _CACHE_MAX
+    assert cache_get(("e", "en", "general", "t0")) is None       # 最早的被淘汰
+    assert cache_get(("e", "en", "general", f"t{_CACHE_MAX+9}")) == f"r{_CACHE_MAX+9}"
