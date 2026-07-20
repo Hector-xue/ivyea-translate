@@ -74,6 +74,57 @@ def _scrollable(inner: QWidget) -> QScrollArea:
     return sa
 
 
+class _ElideLabel(QLabel):
+    """单行标签：文本超宽时右侧省略号，且不会把最小宽度顶大（避免横向溢出）。"""
+
+    def __init__(self, text: str = "", parent=None):
+        super().__init__(parent)
+        self._full = text
+        super().setText(text)
+
+    def setFullText(self, text: str) -> None:
+        self._full = text
+        self._apply()
+
+    def _apply(self) -> None:
+        fm = self.fontMetrics()
+        super().setText(fm.elidedText(self._full, Qt.ElideRight, max(16, self.width())))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply()
+
+    def minimumSizeHint(self):
+        from PySide6.QtCore import QSize
+        return QSize(16, super().minimumSizeHint().height())
+
+
+class _HistoryRow(QWidget):
+    """历史条目卡片：时间/语言（弱）+ 原文（弱）+ 译文（醒目），双击回填。"""
+
+    activated = Signal()
+
+    def __init__(self, meta: str, source: str, result: str, parent=None):
+        super().__init__(parent)
+        self.setObjectName("HistRow")
+        self.setAttribute(Qt.WA_StyledBackground, True)  # 否则 QSS 卡片背景/边框不绘制
+        v = QVBoxLayout(self)
+        v.setContentsMargins(14, 9, 14, 11)
+        v.setSpacing(3)
+        m = QLabel(meta)
+        m.setObjectName("HistMeta")
+        s = _ElideLabel(source)
+        s.setObjectName("HistSrc")
+        r = _ElideLabel(result)
+        r.setObjectName("HistRes")
+        for w in (m, s, r):
+            w.setAttribute(Qt.WA_TransparentForMouseEvents, True)  # 双击落到卡片
+            v.addWidget(w)
+
+    def mouseDoubleClickEvent(self, event):
+        self.activated.emit()
+
+
 class MainWindow(QMainWindow):
     settings_saved = Signal()
     # 测试连接在后台线程跑，结果必须经信号回主线程；
@@ -557,7 +608,12 @@ class MainWindow(QMainWindow):
         head.addWidget(clear_btn)
         lay.addLayout(head)
         self.history_list = QListWidget()
-        self.history_list.itemDoubleClicked.connect(self._on_history_activate)
+        self.history_list.setObjectName("HistList")
+        self.history_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)  # 不再有丑横条
+        self.history_list.setSelectionMode(QListWidget.NoSelection)
+        self.history_list.setSpacing(6)
+        self.history_list.setFrameShape(QListWidget.NoFrame)
+        self.history_list.setUniformItemSizes(False)
         lay.addWidget(self.history_list, 1)
         self._refresh_history_list()
         return page
@@ -597,16 +653,30 @@ class MainWindow(QMainWindow):
     def _refresh_history_list(self) -> None:
         if not hasattr(self, "history_list"):
             return
-        self.history_list.clear()
-        for entry in self._history:
-            src = entry["source"].replace("\n", " ")
-            res = entry["result"].replace("\n", " ")
-            item = QListWidgetItem(f"{entry['ts']}  {src[:40]}\n→ {res[:60]}")
-            item.setData(Qt.UserRole, entry)
-            self.history_list.addItem(item)
+        from PySide6.QtCore import QSize
 
-    def _on_history_activate(self, item: QListWidgetItem) -> None:
-        entry = item.data(Qt.UserRole)
+        self.history_list.clear()
+        if not self._history:
+            item = QListWidgetItem("还没有翻译记录")
+            item.setFlags(Qt.NoItemFlags)
+            item.setTextAlignment(Qt.AlignCenter)
+            self.history_list.addItem(item)
+            return
+        lang_names = dict(LANGUAGES)
+        for entry in self._history:
+            src = entry["source"].replace("\n", " ").strip()
+            res = entry["result"].replace("\n", " ").strip()
+            code = entry.get("lang", "")
+            lang_label = "自动" if code == "auto" else lang_names.get(code, code)
+            meta = f"{entry['ts']}    {lang_label}" if lang_label else entry["ts"]
+            row = _HistoryRow(meta, src, "→ " + res)
+            row.activated.connect(lambda e=entry: self._activate_entry(e))
+            item = QListWidgetItem()
+            item.setSizeHint(QSize(0, row.sizeHint().height()))
+            self.history_list.addItem(item)
+            self.history_list.setItemWidget(item, row)
+
+    def _activate_entry(self, entry: dict) -> None:
         self.source_edit.setPlainText(entry["source"])
         self.result_view.setPlainText(entry["result"])
         self.centralWidget().findChild(QTabWidget).setCurrentIndex(0)

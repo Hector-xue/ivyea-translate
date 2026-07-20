@@ -242,6 +242,26 @@ QListWidget::item:selected {{
     background: {ACCENT_SOFT};
     border: 1px solid {ACCENT};
 }}
+/* 历史页：用自绘卡片(HistRow)，条目本身透明避免双层卡 */
+QListWidget#HistList::item {{
+    background: transparent;
+    border: none;
+    padding: 0;
+    margin: 0;
+    color: {TEXT_SECONDARY};
+}}
+QWidget#HistRow {{
+    background: rgba(255, 255, 255, 0.66);
+    border: 1px solid rgba(255, 255, 255, 0.85);
+    border-radius: 14px;
+}}
+QWidget#HistRow:hover {{
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid {ACCENT};
+}}
+QLabel#HistMeta {{ color: {TEXT_SECONDARY}; font-size: 11px; }}
+QLabel#HistSrc {{ color: {TEXT_SECONDARY}; font-size: 13px; }}
+QLabel#HistRes {{ color: {TEXT_PRIMARY}; font-size: 14px; font-weight: 500; }}
 QToolTip {{
     background: white;
     color: {TEXT_PRIMARY};
