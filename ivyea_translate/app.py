@@ -87,7 +87,7 @@ class TranslateApp(QApplication):
         self.bridge.ocr_ready.connect(self._on_ocr_ready)
         self.bridge.ocr_failed.connect(self._on_ocr_failed)
 
-        # 划词翻译触发：连按两次 Ctrl+C（文本已在剪贴板，零注入最可靠）
+        # 划词翻译触发：Ctrl+C+C（文本已在剪贴板，零注入最可靠）
         self.watcher = ClipboardWatcher(max_chars=int(self.cfg.get("double_copy.max_chars", 3000)))
         self.watcher.double_copy_enabled = bool(self.cfg.get("double_copy.enabled", True))
         self.watcher.double_window_s = float(self.cfg.get("double_copy.window_ms", 700)) / 1000
@@ -139,7 +139,7 @@ class TranslateApp(QApplication):
         act_shot.triggered.connect(self.trigger_screenshot_translate)
         menu.addAction(act_shot)
         menu.addSeparator()
-        # 临时暂停"连按两次 Ctrl+C"监听（大量复制代码时用）
+        # 临时暂停"Ctrl+C+C"监听（大量复制代码时用）
         self.act_pause = QAction("暂停划词翻译", menu)
         self.act_pause.setCheckable(True)
         self.act_pause.setChecked(not self.watcher.double_copy_enabled)
@@ -163,14 +163,14 @@ class TranslateApp(QApplication):
         self.watcher.double_copy_enabled = bool(self.cfg.get("double_copy.enabled", True))
 
     def _toggle_pause(self, paused: bool) -> None:
-        """临时暂停/恢复"连按两次 Ctrl+C"监听（仅本次运行，不写配置）。"""
+        """临时暂停/恢复"Ctrl+C+C"监听（仅本次运行，不写配置）。"""
         self.watcher.double_copy_enabled = not paused
 
     def mark_own_copy(self, text: str) -> None:
         """弹窗/主窗口'复制译文'时调用，防止双击复制被自家写入干扰。"""
         self.watcher.mark_own_copy(text)
 
-    # ---------- 弹窗翻译（双击 Ctrl+C 触发） ----------
+    # ---------- 弹窗翻译（Ctrl+C+C 触发） ----------
 
     def _explain_available(self) -> bool:
         """详解需要大模型；配了 API Key 才显示"详解"按钮。"""
@@ -325,7 +325,7 @@ class TranslateApp(QApplication):
         box.setIcon(QMessageBox.Information)
         box.setText(
             "三步上手：\n\n"
-            "1. 选中任意文字，连按两次 Ctrl+C —— 立即翻译\n"
+            "1. 选中任意文字，按 Ctrl+C+C（连按两下 C）—— 立即翻译\n"
             "2. 按 Ctrl+Alt+S 框选屏幕 —— 截图翻译\n"
             "3. 免配置即用（内置免费翻译）；到「设置」填自己的大模型可解锁风格与邮件助手\n\n"
             "程序常驻托盘，点托盘图标可随时打开本窗口。"

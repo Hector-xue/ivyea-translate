@@ -98,11 +98,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "backtranslate": True,    # 生成后回译校对（确认意思没跑偏）
     },
     "hotkeys": {
-        # 仅截图翻译需要全局热键；划词翻译走"连按两次 Ctrl+C"，无需热键
+        # 仅截图翻译需要全局热键；划词翻译走"Ctrl+C+C"，无需热键
         "screenshot_translate": "<ctrl>+<alt>+s",
     },
     "double_copy": {
-        # 连按两次 Ctrl+C 触发划词翻译，无需注入按键最可靠
+        # Ctrl+C+C 触发划词翻译，无需注入按键最可靠
         "enabled": True,
         "window_ms": 700,
         "max_chars": 3000,
@@ -177,7 +177,7 @@ class Config:
         hk = self._data.get("hotkeys", {})
         # 已移除的快捷键/功能：清掉老配置里的残留键，避免误导
         hk.pop("show_main_window", None)
-        hk.pop("select_translate", None)   # v0.7 起划词走双击 Ctrl+C，不再用热键
+        hk.pop("select_translate", None)   # v0.7 起划词走Ctrl+C+C，不再用热键
         self._data.pop("selection_bubble", None)  # 划词气泡已删除
         # clipboard_watch(复制翻译)已删除；把老的 max_chars 迁到 double_copy。
         # 老配置必无 double_copy（是本版新增），故直接赋值即可保留用户自定义值。
