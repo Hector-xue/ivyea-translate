@@ -115,6 +115,32 @@ def build_email_messages(text: str, target_language: str, tone: str) -> List[Dic
     return build_compose_messages(text, target_language, "email", tone)
 
 
+# ---------- 详解模式（学习）----------
+
+def build_explain_messages(focus_text: str, reference: str, explain_language: str) -> List[Dict[str, str]]:
+    """给语言学习者的讲解 prompt（纯函数）。
+
+    focus_text = 要讲解的外语文本；reference = 其译文（母语）作参考；
+    讲解用 explain_language（母语）书写，简洁实用。
+    """
+    lang_name = LANGUAGE_NAMES.get(explain_language, explain_language)
+    system = (
+        "You are a concise, practical language tutor helping a learner. "
+        f"Write the explanation in {lang_name}. "
+        "You are given a FOREIGN text and its TRANSLATION. Explain the FOREIGN text so the learner "
+        "understands it and could use it. Cover, briefly and only when relevant:\n"
+        "1) key words / phrases with pronunciation (pinyin for Chinese, kana for Japanese, IPA otherwise) and meaning;\n"
+        "2) one or two grammar / sentence-structure points;\n"
+        "3) tone/register and 1–2 more natural alternative phrasings.\n"
+        "Use short bullet lines. Be concise. Do NOT restate the whole translation."
+    )
+    user = f"FOREIGN:\n{focus_text}\n\nTRANSLATION:\n{reference}"
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+
+
 def parse_email_output(text: str) -> tuple:
     """把模型输出拆成 (主题, 正文)。标记缺失时优雅降级。"""
     subject = ""

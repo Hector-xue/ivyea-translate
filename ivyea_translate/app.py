@@ -168,9 +168,14 @@ class TranslateApp(QApplication):
 
     # ---------- 弹窗翻译（双击 Ctrl+C 触发） ----------
 
+    def _explain_available(self) -> bool:
+        """详解需要大模型；配了 API Key 才显示"详解"按钮。"""
+        return bool((self.cfg.get("provider.api_key") or "").strip())
+
     def _popup_translate_at_cursor(self, text: str) -> None:
         popup = TranslationPopup(original=text, show_original=False,
-                                 width=int(self.cfg.get("ui.popup_width", 520)))
+                                 width=int(self.cfg.get("ui.popup_width", 520)),
+                                 show_explain=self._explain_available())
         self._track_popup(popup)
         popup.show_at_cursor()
         self._start_translate(popup, text)
@@ -216,7 +221,42 @@ class TranslateApp(QApplication):
 
     def _track_popup(self, popup: TranslationPopup) -> None:
         self._popups.append(popup)
+        popup.explain_requested.connect(lambda p=popup: self._on_explain_requested(p))
         popup.destroyed.connect(lambda: self._popups.remove(popup) if popup in self._popups else None)
+
+    def _on_explain_requested(self, popup: TranslationPopup) -> None:
+        """弹窗点"详解"：讲解外语侧（用母语书写），流式回填。仅大模型可用。"""
+        from .langdetect import is_language
+        from .llm import client_from_config
+        from .translator import build_explain_messages
+
+        translation = popup.result_view.toPlainText().strip()
+        if not translation:
+            return
+        try:
+            client = client_from_config(self.cfg)
+        except LLMError:
+            popup.set_explain_failed("详解需要配置大模型：设置 → 翻译模型 填写 API Key")
+            return
+        primary = self.cfg.get("translate.primary_language", "zh-CN")
+        source = popup.original_text or ""
+        # 讲解"外语"那一侧：源文若非母语则讲源文，否则讲译文
+        if source and not is_language(source, primary):
+            focus, ref = source, translation
+        else:
+            focus, ref = translation, source
+        popup.set_explain_status("详解生成中…")
+        worker = TranslateWorker(
+            client, focus, primary, "general", parent=self,
+            messages=build_explain_messages(focus, ref, primary),
+        )
+        self._workers.append(worker)
+        worker.chunk.connect(popup.append_explain_chunk)
+        worker.finished_ok.connect(lambda full: popup.set_explain_done(full))
+        worker.failed.connect(popup.set_explain_failed)
+        worker.finished.connect(lambda w=worker: self._workers.remove(w) if w in self._workers else None)
+        popup.destroyed.connect(worker.cancel)
+        worker.start()
 
     # ---------- 截图翻译 ----------
 
@@ -235,7 +275,8 @@ class TranslateApp(QApplication):
         self._clear_overlay()
         # 弹窗立即出现（"识别中"状态），OCR 在后台跑完再回填——消除框选后的静默等待
         popup = TranslationPopup(original="", show_original=True,
-                                 width=int(self.cfg.get("ui.popup_width", 520)))
+                                 width=int(self.cfg.get("ui.popup_width", 520)),
+                                 show_explain=self._explain_available())
         popup.set_status("正在识别文字…")
         self._track_popup(popup)
         popup.show_near(rect)

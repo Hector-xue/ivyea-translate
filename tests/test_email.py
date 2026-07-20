@@ -119,3 +119,23 @@ def test_build_email_messages_still_works():
     # 旧接口保持可用
     sys_prompt = _system(build_email_messages("发货推迟", "en", "business"))
     assert SUBJECT_MARK in sys_prompt
+
+
+# ---------- 详解模式 ----------
+
+from ivyea_translate.translator import build_explain_messages
+
+
+def test_explain_messages_structure():
+    msgs = build_explain_messages("It's a piece of cake.", "小菜一碟。", "zh-CN")
+    assert len(msgs) == 2
+    sys_prompt = msgs[0]["content"]
+    assert "Simplified Chinese" in sys_prompt        # 用母语讲解
+    assert "pronunciation" in sys_prompt.lower()
+    assert "It's a piece of cake." in msgs[1]["content"]
+    assert "小菜一碟。" in msgs[1]["content"]
+
+
+def test_explain_language_varies():
+    sys_prompt = build_explain_messages("x", "y", "ja")[0]["content"]
+    assert "Japanese" in sys_prompt

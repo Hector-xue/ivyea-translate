@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Optional, Tuple
 
-from PySide6.QtCore import QPoint, QRect, Qt, QTimer
+from PySide6.QtCore import QPoint, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QCursor, QGuiApplication, QTextOption
 from PySide6.QtWidgets import (
     QApplication,
@@ -115,8 +115,13 @@ class _AutoGrowText(QTextEdit):
 class TranslationPopup(QWidget):
     """一次翻译一个弹窗实例；关闭即销毁。支持钉住（失焦不关）。"""
 
-    def __init__(self, original: str = "", show_original: bool = False, width: int = 520):
+    explain_requested = Signal()  # 首次点击"详解"时发出，由 app 接管生成
+
+    def __init__(self, original: str = "", show_original: bool = False,
+                 width: int = 520, show_explain: bool = False):
         super().__init__(None)
+        self._show_explain = show_explain
+        self._explain_started = False
         self.setWindowFlags(
             Qt.FramelessWindowHint | Qt.Tool | Qt.WindowStaysOnTopHint
         )
@@ -176,6 +181,11 @@ class TranslationPopup(QWidget):
         self.status_label.setObjectName("Hint")
         head.addWidget(self.status_label)
         head.addStretch(1)
+        self.explain_btn = QPushButton("详解")
+        self.explain_btn.setObjectName("Ghost")
+        self.explain_btn.setToolTip("讲解重点词、语法与更地道的说法（需大模型）")
+        self.explain_btn.clicked.connect(self._on_explain_clicked)
+        self.explain_btn.setVisible(self._show_explain)
         self.pin_btn = QPushButton("📌")
         self.pin_btn.setObjectName("Ghost")
         self.pin_btn.setFixedSize(26, 26)
@@ -188,6 +198,7 @@ class TranslationPopup(QWidget):
         close_btn.setObjectName("Ghost")
         close_btn.setFixedSize(26, 26)
         close_btn.clicked.connect(self.close)
+        head.addWidget(self.explain_btn)
         head.addWidget(self.pin_btn)
         head.addWidget(self.copy_btn)
         head.addWidget(close_btn)
@@ -219,6 +230,21 @@ class TranslationPopup(QWidget):
         # 译文区（流式）
         self.result_view = _AutoGrowText(max_h=self._res_max_h)
         lay.addWidget(self.result_view, 1)
+
+        # 详解区（默认隐藏，点"详解"按需生成）
+        self._explain_divider = QFrame()
+        self._explain_divider.setFrameShape(QFrame.HLine)
+        self._explain_divider.setStyleSheet("background: rgba(147,163,136,0.3); max-height: 1px; border: none;")
+        lay.addWidget(self._explain_divider)
+        self._explain_label = QLabel("详解")
+        self._explain_label.setObjectName("Hint")
+        lay.addWidget(self._explain_label)
+        self._explain_view = _AutoGrowText(max_h=int(self._res_max_h * 0.8))
+        self._explain_view.setStyleSheet(f"color: {theme.TEXT_PRIMARY}; font-size: 13px;")
+        lay.addWidget(self._explain_view)
+        for w in (self._explain_divider, self._explain_label, self._explain_view):
+            w.setVisible(False)
+        self._explain_parts: list = []
 
         # 拖拽提示（贴右下角，暗示可从边缘缩放）
         tip = QLabel("拖动边缘可调整大小", card)
@@ -267,6 +293,48 @@ class TranslationPopup(QWidget):
         self.status_label.setText("失败")
         self.result_view.setPlainText(message)
         self.result_view.setStyleSheet(f"color: {theme.ACCENT};")
+        self._relayout()
+
+    # ---- 详解模式 ----
+
+    def _on_explain_clicked(self) -> None:
+        if not self._explain_started:
+            # 首次：请求 app 生成
+            if not self.result_view.toPlainText().strip():
+                return
+            self._explain_started = True
+            self._set_explain_visible(True)
+            self._explain_view.setPlainText("详解生成中…")
+            self.explain_requested.emit()
+            self._relayout()
+        else:
+            # 已有：折叠/展开
+            vis = self._explain_view.isVisible()
+            self._set_explain_visible(not vis)
+            self._relayout()
+
+    def _set_explain_visible(self, visible: bool) -> None:
+        for w in (self._explain_divider, self._explain_label, self._explain_view):
+            w.setVisible(visible)
+
+    def set_explain_status(self, text: str) -> None:
+        self._set_explain_visible(True)
+        self._explain_view.setPlainText(text)
+        self._relayout()
+
+    def append_explain_chunk(self, piece: str) -> None:
+        self._explain_parts.append(piece)
+        self._explain_view.setPlainText("".join(self._explain_parts))
+        self._relayout()
+
+    def set_explain_done(self, full_text: str) -> None:
+        self._explain_parts = [full_text]
+        self._explain_view.setPlainText(full_text)
+        self._relayout()
+
+    def set_explain_failed(self, message: str) -> None:
+        self._explain_view.setStyleSheet(f"color: {theme.ACCENT}; font-size: 13px;")
+        self._explain_view.setPlainText(message)
         self._relayout()
 
     def _relayout(self) -> None:
