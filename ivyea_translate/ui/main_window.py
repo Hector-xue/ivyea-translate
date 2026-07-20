@@ -94,7 +94,7 @@ class MainWindow(QMainWindow):
 
         tabs = QTabWidget()
         tabs.addTab(self._build_translate_tab(), "翻译")
-        tabs.addTab(self._build_email_tab(), "邮件")
+        tabs.addTab(self._build_email_tab(), "写作")
         tabs.addTab(self._build_history_tab(), "历史")
         tabs.addTab(self._build_settings_tab(), "设置")
         outer.addWidget(tabs, 1)
@@ -301,37 +301,45 @@ class MainWindow(QMainWindow):
         card_lay.setContentsMargins(18, 16, 18, 18)
         card_lay.setSpacing(10)
 
+        from ..translator import COMPOSE_SCENARIOS
+
         opts = QHBoxLayout()
+        opts.addWidget(QLabel("场景"))
+        self.email_scenario_combo = QComboBox()
+        for code, (label, _desc, _sub) in COMPOSE_SCENARIOS.items():
+            self.email_scenario_combo.addItem(label, code)
+        self._select_combo_data(self.email_scenario_combo, self.cfg.get("email.scenario", "email"))
+        self.email_scenario_combo.currentIndexChanged.connect(self._on_scenario_changed)
+        opts.addWidget(self.email_scenario_combo)
+        opts.addSpacing(10)
         opts.addWidget(QLabel("目标语言"))
         self.email_lang_combo = QComboBox()
         for code, label in LANGUAGES:
             self.email_lang_combo.addItem(label, code)
         self._select_combo_data(self.email_lang_combo, self.cfg.get("email.target_language", "en"))
         opts.addWidget(self.email_lang_combo)
-        opts.addSpacing(12)
+        opts.addSpacing(10)
         opts.addWidget(QLabel("语气"))
         self.email_tone_combo = QComboBox()
         for code, (label, _rule) in EMAIL_TONES.items():
             self.email_tone_combo.addItem(label, code)
         self._select_combo_data(self.email_tone_combo, self.cfg.get("email.tone", "business"))
         opts.addWidget(self.email_tone_combo)
-        hint = QLabel("按目标语言的邮件礼仪重写优化，并自动总结主题")
-        hint.setObjectName("Hint")
-        opts.addWidget(hint)
         opts.addStretch(1)
         card_lay.addLayout(opts)
 
+        self.email_hint = QLabel("")
+        self.email_hint.setObjectName("Hint")
+        self.email_hint.setWordWrap(True)
+        card_lay.addWidget(self.email_hint)
+
         self.email_source = QPlainTextEdit()
-        self.email_source.setPlaceholderText(
-            "粘贴或输入邮件草稿（任何语言、想到哪写到哪都行）…\n"
-            "例如：告诉客户发货推迟三天，物流拥堵导致，表达歉意并给 5% 折扣"
-        )
-        self.email_source.setMinimumHeight(110)
+        self.email_source.setMinimumHeight(100)
         card_lay.addWidget(self.email_source)
 
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
-        self.email_btn = QPushButton("优化并翻译")
+        self.email_btn = QPushButton("生成")
         self.email_btn.setObjectName("Primary")
         self.email_btn.setMinimumWidth(130)
         self.email_btn.clicked.connect(self._on_email_clicked)
@@ -343,7 +351,10 @@ class MainWindow(QMainWindow):
         res_lay.setContentsMargins(18, 14, 18, 16)
         res_lay.setSpacing(8)
 
-        subj_row = QHBoxLayout()
+        # 主题行（仅邮件场景显示）
+        self.email_subject_row = QWidget()
+        subj_row = QHBoxLayout(self.email_subject_row)
+        subj_row.setContentsMargins(0, 0, 0, 0)
         subj_label = QLabel("主题")
         subj_label.setObjectName("CardTitle")
         subj_row.addWidget(subj_label)
@@ -355,22 +366,33 @@ class MainWindow(QMainWindow):
         copy_subj_btn.setObjectName("Ghost")
         copy_subj_btn.clicked.connect(lambda: self._copy_text(self.email_subject.text()))
         subj_row.addWidget(copy_subj_btn)
-        res_lay.addLayout(subj_row)
+        res_lay.addWidget(self.email_subject_row)
 
         body_head = QHBoxLayout()
-        body_label = QLabel("正文")
-        body_label.setObjectName("CardTitle")
-        body_head.addWidget(body_label)
+        self.email_body_label = QLabel("正文")
+        self.email_body_label.setObjectName("CardTitle")
+        body_head.addWidget(self.email_body_label)
         body_head.addStretch(1)
-        copy_body_btn = QPushButton("复制正文")
+        copy_body_btn = QPushButton("复制")
         copy_body_btn.setObjectName("Ghost")
         copy_body_btn.clicked.connect(lambda: self._copy_text(self.email_body.toPlainText()))
         body_head.addWidget(copy_body_btn)
         res_lay.addLayout(body_head)
         self.email_body = QPlainTextEdit()
         self.email_body.setReadOnly(True)
-        self.email_body.setPlaceholderText("优化后的邮件正文会出现在这里")
+        self.email_body.setPlaceholderText("生成的地道外语会出现在这里")
         res_lay.addWidget(self.email_body, 1)
+
+        # 回译校对：把生成结果译回母语，确认意思没跑偏
+        self.email_backtrans_label = QLabel("回译校对")
+        self.email_backtrans_label.setObjectName("Hint")
+        res_lay.addWidget(self.email_backtrans_label)
+        self.email_backtrans = QPlainTextEdit()
+        self.email_backtrans.setReadOnly(True)
+        self.email_backtrans.setPlaceholderText("生成后自动把结果译回母语，供你确认含义")
+        self.email_backtrans.setMaximumHeight(96)
+        self.email_backtrans.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 13px;")
+        res_lay.addWidget(self.email_backtrans)
 
         # 上下可拖拽分隔：草稿区 / 结果区，结果默认更大
         from PySide6.QtWidgets import QSplitter
@@ -383,7 +405,34 @@ class MainWindow(QMainWindow):
         split.setStretchFactor(1, 1)
         split.setSizes([240, 480])
         lay.addWidget(split, 1)
+        self._on_scenario_changed()
         return page
+
+    def _on_scenario_changed(self) -> None:
+        from ..translator import COMPOSE_SCENARIOS
+
+        scen = self.email_scenario_combo.currentData()
+        _name, _desc, want_subject = COMPOSE_SCENARIOS.get(scen, COMPOSE_SCENARIOS["general"])
+        self.email_subject_row.setVisible(want_subject)
+        hints = {
+            "email": "用母语写要点，生成目标语言的地道邮件并自动拟主题",
+            "message": "用母语写想说的，生成地道的外语聊天消息（Slack / 微信 / Teams）",
+            "comment": "用母语写意见，生成简洁专业的外语评论 / PR 留言",
+            "social": "用母语写想法，生成适合社媒的地道外语贴文",
+            "general": "用母语写下要点，生成地道的目标语言文字",
+        }
+        placeholders = {
+            "email": "例如：告诉客户发货推迟三天，物流拥堵导致，表达歉意并给 5% 折扣",
+            "message": "例如：跟同事说接口改好了，让他有空一起联调下",
+            "comment": "例如：这函数没处理空值，建议加判断；另外命名可以更清晰",
+            "social": "例如：分享我做了个免费划词翻译小工具，欢迎试用",
+            "general": "用母语写下你想表达的内容…",
+        }
+        self.email_hint.setText(hints.get(scen, hints["general"]))
+        self.email_source.setPlaceholderText(placeholders.get(scen, placeholders["general"]))
+        self.email_body_label.setText("正文" if want_subject else "生成结果")
+        self.cfg.set("email.scenario", scen)
+        self.cfg.save()
 
     def _copy_text(self, text: str) -> None:
         if text:
@@ -396,38 +445,40 @@ class MainWindow(QMainWindow):
             QGuiApplication.clipboard().setText(text)
 
     def _on_email_clicked(self) -> None:
-        from ..translator import build_email_messages
+        from ..translator import build_compose_messages
 
         text = self.email_source.toPlainText().strip()
         if not text:
             return
         if getattr(self, "_email_worker", None) is not None and self._email_worker.isRunning():
             self._email_worker.cancel()
-        # 邮件助手需要大模型的改写能力，免费翻译引擎无法胜任
+        # 写作助手需要大模型的改写能力，免费翻译引擎无法胜任
         try:
             client = client_from_config(self.cfg)
         except LLMError:
             self.email_body.setPlainText(
-                "邮件助手需要配置大模型：请到「设置 → 翻译模型」填写 API Key。\n"
-                "（免费翻译引擎只做直译，不支持邮件改写与主题总结。）"
+                "写作助手需要配置大模型：请到「设置 → 翻译模型」填写 API Key。\n"
+                "（免费翻译引擎只做直译，不支持改写与润色。）"
             )
             return
+        scen = self.email_scenario_combo.currentData()
         lang = self.email_lang_combo.currentData()
         tone = self.email_tone_combo.currentData()
+        self.cfg.set("email.scenario", scen)
         self.cfg.set("email.target_language", lang)
         self.cfg.set("email.tone", tone)
         self.cfg.save()
         self.email_subject.clear()
         self.email_body.setPlainText("")
+        self.email_backtrans.setPlainText("")
         self.email_btn.setEnabled(False)
-        self.email_btn.setText("优化中…")
+        self.email_btn.setText("生成中…")
         self._email_worker = TranslateWorker(
             client, text, lang, "general", parent=self,
-            messages=build_email_messages(text, lang, tone),
+            messages=build_compose_messages(text, lang, scen, tone),
         )
-        # 流式阶段原样滚动显示，完成后再拆主题/正文
         self._email_worker.chunk.connect(self._append_email_chunk)
-        self._email_worker.finished_ok.connect(lambda full, s=text: self._email_done(s, full))
+        self._email_worker.finished_ok.connect(lambda full, s=text, sc=scen: self._email_done(s, full, sc))
         self._email_worker.failed.connect(self._email_failed)
         self._email_worker.start()
 
@@ -435,16 +486,31 @@ class MainWindow(QMainWindow):
         self.email_body.moveCursor(self.email_body.textCursor().MoveOperation.End)
         self.email_body.insertPlainText(piece)
 
-    def _email_done(self, source: str, full: str) -> None:
-        from ..translator import parse_email_output
+    def _email_done(self, source: str, full: str, scenario: str) -> None:
+        from ..translator import parse_compose_output
 
-        subject, body = parse_email_output(full)
+        subject, body = parse_compose_output(full, scenario)
         self.email_subject.setText(subject)
         self.email_body.setPlainText(body)
         self.email_btn.setEnabled(True)
-        self.email_btn.setText("优化并翻译")
+        self.email_btn.setText("生成")
         self.add_history(source, (f"【主题】{subject}\n{body}" if subject else body),
-                         self.email_lang_combo.currentData(), "email")
+                         self.email_lang_combo.currentData(), "compose")
+        # 回译校对：把结果译回母语，确认意思没跑偏
+        if bool(self.cfg.get("email.backtranslate", True)) and body.strip():
+            self._run_backtranslation(body)
+
+    def _run_backtranslation(self, body: str) -> None:
+        try:
+            client = client_from_config(self.cfg)
+        except LLMError:
+            return
+        primary = self.cfg.get("translate.primary_language", "zh-CN")
+        self.email_backtrans.setPlainText("回译中…")
+        self._bt_worker = TranslateWorker(client, body, primary, "general", parent=self)
+        self._bt_worker.finished_ok.connect(lambda full: self.email_backtrans.setPlainText(full))
+        self._bt_worker.failed.connect(lambda m: self.email_backtrans.setPlainText(""))
+        self._bt_worker.start()
 
     def _email_failed(self, message: str) -> None:
         self.email_btn.setEnabled(True)

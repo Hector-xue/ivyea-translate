@@ -63,33 +63,56 @@ EMAIL_TONES: Dict[str, tuple] = {
 SUBJECT_MARK = "【主题】"
 BODY_MARK = "【正文】"
 
+# 写作场景：code -> (中文名, 英文描述给模型, 是否需要主题行)
+COMPOSE_SCENARIOS: Dict[str, tuple] = {
+    "email": ("邮件", "a polished, well-structured email with an appropriate greeting and closing", True),
+    "message": ("消息/聊天", "a short, natural instant message (e.g. Slack, WeChat, Teams) — conversational, no greeting/signature", False),
+    "comment": ("评论/PR", "a concise, professional comment for a code review, GitHub PR or issue — clear and to the point", False),
+    "social": ("社媒/贴文", "an engaging social-media post, natural and idiomatic for the platform", False),
+    "general": ("通用", "a polished, natural piece of writing", False),
+}
 
-def build_email_messages(text: str, target_language: str, tone: str) -> List[Dict[str, str]]:
-    """邮件优化 prompt。纯函数。
 
-    要求模型：按目标语言母语者的邮件惯例重写（称呼/正文/结尾），
-    不直译不添油加醋，并总结一行主题；输出用固定标记便于解析。
+def build_compose_messages(text: str, target_language: str, scenario: str, tone: str) -> List[Dict[str, str]]:
+    """反向写作 prompt（纯函数）：把用户草稿改写成目标语言母语者写法。
+
+    email 场景额外产出一行主题；其余场景只出正文。不直译、不添油加醋。
     """
     lang_name = LANGUAGE_NAMES.get(target_language, target_language)
     tone_rule = EMAIL_TONES.get(tone, EMAIL_TONES["business"])[1]
-    system = (
-        "You are a professional bilingual email assistant. "
-        f"Rewrite the user's draft as a polished, natural email in {lang_name}, "
-        "following the email conventions native speakers actually use "
-        "(appropriate greeting, well-organized body, proper closing). "
-        f"{tone_rule} "
-        "Preserve every fact in the draft; do not invent information. "
-        "If the draft lacks names, use natural generic forms (e.g. 'Hi team,' / '尊敬的客户'). "
-        "Also write ONE concise subject line in the same target language that summarizes the email. "
-        "Output EXACTLY in this format, nothing else:\n"
-        f"{SUBJECT_MARK}<subject line>\n"
-        f"{BODY_MARK}\n"
-        "<email body>"
-    )
+    _name, scen_desc, want_subject = COMPOSE_SCENARIOS.get(scenario, COMPOSE_SCENARIOS["general"])
+    lines = [
+        "You are a professional bilingual writing assistant.",
+        f"Rewrite the user's draft as {scen_desc}, in {lang_name}, "
+        "natural and idiomatic exactly as a native speaker would write it.",
+        tone_rule,
+        "Preserve every fact in the draft; do not invent information.",
+        "If names are missing, use natural generic forms.",
+    ]
+    if want_subject:
+        lines.append(
+            "Also write ONE concise subject line in the target language. "
+            "Output EXACTLY in this format, nothing else:\n"
+            f"{SUBJECT_MARK}<subject line>\n{BODY_MARK}\n<body>"
+        )
+    else:
+        lines.append("Output ONLY the rewritten text, nothing else (no preamble, no quotes).")
     return [
-        {"role": "system", "content": system},
+        {"role": "system", "content": " ".join(lines[:-1]) + "\n" + lines[-1]},
         {"role": "user", "content": text},
     ]
+
+
+def parse_compose_output(text: str, scenario: str) -> tuple:
+    """按场景解析输出。email -> (主题, 正文)；其余 -> ("", 正文)。"""
+    if scenario == "email":
+        return parse_email_output(text)
+    return "", text.strip()
+
+
+def build_email_messages(text: str, target_language: str, tone: str) -> List[Dict[str, str]]:
+    """邮件优化 = 写作助手的 email 场景（保留旧接口）。"""
+    return build_compose_messages(text, target_language, "email", tone)
 
 
 def parse_email_output(text: str) -> tuple:

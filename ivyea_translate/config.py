@@ -94,6 +94,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "email": {
         "target_language": "en",
         "tone": "business",
+        "scenario": "email",      # 写作场景：email/message/comment/social/general
+        "backtranslate": True,    # 生成后回译校对（确认意思没跑偏）
     },
     "hotkeys": {
         # 仅截图翻译需要全局热键；划词翻译走"连按两次 Ctrl+C"，无需热键

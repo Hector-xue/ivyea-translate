@@ -70,3 +70,52 @@ def test_parse_no_markers_degrades_gracefully():
     subject, body = parse_email_output("Dear team,\njust the body.")
     assert subject == ""
     assert body == "Dear team,\njust the body."
+
+
+# ---------- 反向写作台（compose）----------
+
+from ivyea_translate.translator import (
+    COMPOSE_SCENARIOS,
+    build_compose_messages,
+    parse_compose_output,
+)
+
+
+def test_email_scenario_has_subject_markers():
+    sys_prompt = _system(build_compose_messages("发货推迟", "en", "email", "business"))
+    assert SUBJECT_MARK in sys_prompt and BODY_MARK in sys_prompt
+
+
+@pytest.mark.parametrize("scen", [s for s in COMPOSE_SCENARIOS if s != "email"])
+def test_nonemail_scenarios_no_subject(scen):
+    sys_prompt = _system(build_compose_messages("hi", "en", scen, "concise"))
+    assert SUBJECT_MARK not in sys_prompt
+    assert "ONLY the rewritten text" in sys_prompt
+
+
+def test_all_scenarios_have_metadata():
+    for code, (label, desc, want_subject) in COMPOSE_SCENARIOS.items():
+        assert label and desc and isinstance(want_subject, bool)
+
+
+def test_scenario_description_injected():
+    sys_prompt = _system(build_compose_messages("x", "en", "comment", "concise"))
+    assert "code review" in sys_prompt.lower()
+
+
+def test_parse_compose_email_splits_subject():
+    subject, body = parse_compose_output("【主题】Hello\n【正文】\nDear team,\nFYI.", "email")
+    assert subject == "Hello"
+    assert body.startswith("Dear team,")
+
+
+def test_parse_compose_nonemail_is_whole_body():
+    subject, body = parse_compose_output("Just a chat message, no subject.", "message")
+    assert subject == ""
+    assert body == "Just a chat message, no subject."
+
+
+def test_build_email_messages_still_works():
+    # 旧接口保持可用
+    sys_prompt = _system(build_email_messages("发货推迟", "en", "business"))
+    assert SUBJECT_MARK in sys_prompt
