@@ -12,17 +12,16 @@ from __future__ import annotations
 from typing import Optional, Tuple
 
 from PySide6.QtCore import QPoint, QRect, Qt, QTimer
-from PySide6.QtGui import QGuiApplication, QTextOption
+from PySide6.QtGui import QCursor, QGuiApplication, QTextOption
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
     QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
-    QPlainTextEdit,
     QPushButton,
-    QSizeGrip,
     QSizePolicy,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -32,6 +31,10 @@ from . import theme
 Rect = Tuple[int, int, int, int]  # x, y, w, h
 
 MAX_SIZE = 16777215
+# 弹窗阴影留边（也是拖拽调整大小的抓取带）
+MARGIN_L, MARGIN_T, MARGIN_R, MARGIN_B = 20, 14, 20, 24
+RESIZE_GRAB = 12          # 距卡片边缘多少像素内算"抓边"
+MIN_W, MIN_H = 320, 180
 
 
 def _clamp(v: int, lo: int, hi: int) -> int:
@@ -68,9 +71,12 @@ def compute_popup_pos(popup_w: int, popup_h: int, anchor: Rect, screen: Rect, ma
     )
 
 
-class _AutoGrowText(QPlainTextEdit):
+class _AutoGrowText(QTextEdit):
     """只读文本区，随内容自动长高，超过 max_h 出滚动条；
-    用户手动调整弹窗大小后切换为自由伸展（set_free）。"""
+    用户手动调整弹窗大小后切换为自由伸展（set_free）。
+
+    用 QTextEdit 而非 QPlainTextEdit：后者的 document().size() 不反映
+    换行后的真实高度（永远约等于一行），会导致弹窗永远过矮。"""
 
     def __init__(self, max_h: int = 460, parent=None):
         super().__init__(parent)
@@ -78,10 +84,10 @@ class _AutoGrowText(QPlainTextEdit):
         self.setFrameStyle(QFrame.NoFrame)
         self.setWordWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._max_h = max_h
         self._free = False
         self.textChanged.connect(self._adjust_height)
-        self._adjust_height()
 
     def set_free(self) -> None:
         self._free = True
@@ -89,25 +95,21 @@ class _AutoGrowText(QPlainTextEdit):
         self.setMaximumHeight(MAX_SIZE)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._adjust_height()  # 宽度变化后按新换行重算高度
+
     def _adjust_height(self):
         if self._free:
             return
-        doc_h = int(self.document().size().height()) + 16
-        self.setFixedHeight(max(44, min(doc_h, self._max_h)))
-
-
-class _Grip(QSizeGrip):
-    """右下角调整大小手柄：第一次拖动时把弹窗切到自由尺寸模式。"""
-
-    def __init__(self, popup: "TranslationPopup", parent=None):
-        super().__init__(parent)
-        self._popup = popup
-        self.setFixedSize(16, 16)
-        self.setStyleSheet("background: transparent;")
-
-    def mousePressEvent(self, event):
-        self._popup.enter_manual_size()
-        super().mousePressEvent(event)
+        w = self.viewport().width()
+        if w <= 0:
+            return  # 尚未布局，show/resize 后会再触发
+        doc = self.document()
+        doc.setTextWidth(w)  # 关键：按实际宽度换行后再量高度，否则长文本被低估
+        target = max(60, min(int(doc.size().height()) + 14, self._max_h))
+        if self.height() != target:
+            self.setFixedHeight(target)
 
 
 class TranslationPopup(QWidget):
@@ -121,10 +123,21 @@ class TranslationPopup(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setMouseTracking(True)
         self._pinned = False
         self._manual_size = False
         self._drag_offset: Optional[QPoint] = None
+        self._resize_edge = ""
+        self._resize_start_geom: Optional[QRect] = None
+        self._resize_start_global: Optional[QPoint] = None
         self._popup_width = width
+        # 译文/原文区默认高度上限随屏幕自适应，长文本也能一眼浏览
+        try:
+            avail_h = QGuiApplication.primaryScreen().availableGeometry().height()
+        except Exception:
+            avail_h = 900
+        self._res_max_h = int(min(avail_h * 0.62, 680))
+        self._orig_max_h = int(min(avail_h * 0.32, 300))
 
         card = QWidget(self)
         card.setObjectName("PopupCard")
@@ -135,7 +148,7 @@ class TranslationPopup(QWidget):
                 border: 1px solid rgba(255, 255, 255, 0.9);
                 border-radius: 16px;
             }}
-            QPlainTextEdit {{
+            QTextEdit {{
                 background: transparent;
                 border: none;
                 padding: 0;
@@ -191,7 +204,7 @@ class TranslationPopup(QWidget):
             self._orig_toggle.setStyleSheet("text-align: left; font-size: 12px;")
             self._orig_toggle.clicked.connect(self._toggle_original)
             lay.addWidget(self._orig_toggle)
-            self._orig_view = _AutoGrowText(max_h=200)
+            self._orig_view = _AutoGrowText(max_h=self._orig_max_h)
             self._orig_view.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 13px;")
             lay.addWidget(self._orig_view)
             self._divider = QFrame()
@@ -204,15 +217,16 @@ class TranslationPopup(QWidget):
                 self._set_original_visible(False)
 
         # 译文区（流式）
-        self.result_view = _AutoGrowText(max_h=460)
+        self.result_view = _AutoGrowText(max_h=self._res_max_h)
         lay.addWidget(self.result_view, 1)
 
-        # 右下角调整大小手柄
-        grip_row = QHBoxLayout()
-        grip_row.setContentsMargins(0, 0, 0, 0)
-        grip_row.addStretch(1)
-        grip_row.addWidget(_Grip(self, card))
-        lay.addLayout(grip_row)
+        # 拖拽提示（贴右下角，暗示可从边缘缩放）
+        tip = QLabel("拖动边缘可调整大小", card)
+        tip.setObjectName("Hint")
+        tip.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 11px;")
+        tip.setAlignment(Qt.AlignRight)
+        lay.addWidget(tip)
+        self._resize_tip = tip
 
         self.setFixedWidth(width)
         self._result_parts: list = []
@@ -259,17 +273,64 @@ class TranslationPopup(QWidget):
         if not self._manual_size:
             self.adjustSize()
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        # 布局完成后再量一次：此时文本区宽度已确定，能按换行算出正确高度
+        QTimer.singleShot(0, self._relayout)
+
     # ---- 手动调整大小 ----
 
     def enter_manual_size(self) -> None:
         if self._manual_size:
             return
         self._manual_size = True
-        self.setMinimumSize(360, 220)
+        # 解除固定宽/高，允许四向自由拖拽
+        self.setMinimumSize(MIN_W, MIN_H)
         self.setMaximumSize(MAX_SIZE, MAX_SIZE)
         self.result_view.set_free()
         if self._orig_view is not None:
             self._orig_view.set_free()
+
+    # ---- 边缘拖拽缩放（无边框窗口自绘） ----
+
+    def _card_rect(self) -> QRect:
+        return QRect(MARGIN_L, MARGIN_T,
+                     self.width() - MARGIN_L - MARGIN_R,
+                     self.height() - MARGIN_T - MARGIN_B)
+
+    def _edge_at(self, pos: QPoint) -> str:
+        r = self._card_rect()
+        g = RESIZE_GRAB
+        # 需落在卡片纵/横跨度内（含抓取带）才算对应边
+        in_x = r.left() - g <= pos.x() <= r.right() + g
+        in_y = r.top() - g <= pos.y() <= r.bottom() + g
+        left = in_y and abs(pos.x() - r.left()) <= g
+        right = in_y and abs(pos.x() - r.right()) <= g
+        top = in_x and abs(pos.y() - r.top()) <= g
+        bottom = in_x and abs(pos.y() - r.bottom()) <= g
+        return ("top" if top else "") + ("bottom" if bottom else "") + \
+               ("left" if left else "") + ("right" if right else "")
+
+    _CURSORS = {
+        "left": Qt.SizeHorCursor, "right": Qt.SizeHorCursor,
+        "top": Qt.SizeVerCursor, "bottom": Qt.SizeVerCursor,
+        "topleft": Qt.SizeFDiagCursor, "bottomright": Qt.SizeFDiagCursor,
+        "topright": Qt.SizeBDiagCursor, "bottomleft": Qt.SizeBDiagCursor,
+    }
+
+    def _apply_resize(self, gp: QPoint) -> None:
+        d = gp - self._resize_start_global
+        g = QRect(self._resize_start_geom)
+        e = self._resize_edge
+        if "left" in e:
+            g.setLeft(min(g.left() + d.x(), g.right() - MIN_W))
+        if "right" in e:
+            g.setRight(max(g.right() + d.x(), g.left() + MIN_W))
+        if "top" in e:
+            g.setTop(min(g.top() + d.y(), g.bottom() - MIN_H))
+        if "bottom" in e:
+            g.setBottom(max(g.bottom() + d.y(), g.top() + MIN_H))
+        self.setGeometry(g)
 
     # ---- 定位 ----
 
@@ -324,17 +385,37 @@ class TranslationPopup(QWidget):
             QTimer.singleShot(1200, lambda: self.copy_btn.setText("复制"))
 
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() != Qt.LeftButton:
+            return
+        edge = self._edge_at(event.position().toPoint())
+        if edge:
+            # 从边缘按下 -> 缩放
+            self.enter_manual_size()
+            self._resize_edge = edge
+            self._resize_start_geom = QRect(self.geometry())
+            self._resize_start_global = event.globalPosition().toPoint()
+        else:
+            # 其余区域 -> 移动
             self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            event.accept()
+        event.accept()
 
     def mouseMoveEvent(self, event):
-        if self._drag_offset is not None and event.buttons() & Qt.LeftButton:
+        if self._resize_edge and (event.buttons() & Qt.LeftButton):
+            self._apply_resize(event.globalPosition().toPoint())
+            event.accept()
+            return
+        if self._drag_offset is not None and (event.buttons() & Qt.LeftButton):
             self.move(event.globalPosition().toPoint() - self._drag_offset)
             event.accept()
+            return
+        # 无按键：靠近边缘时给出缩放光标提示
+        edge = self._edge_at(event.position().toPoint())
+        self.setCursor(self._CURSORS.get(edge, Qt.ArrowCursor))
 
     def mouseReleaseEvent(self, event):
         self._drag_offset = None
+        self._resize_edge = ""
+        self._resize_start_geom = None
         event.accept()
 
     def keyPressEvent(self, event):

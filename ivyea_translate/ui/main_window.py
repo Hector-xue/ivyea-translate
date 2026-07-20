@@ -56,8 +56,8 @@ class MainWindow(QMainWindow):
         self._history: List[dict] = self._load_history()
 
         self.setWindowTitle("Ivyea Translate")
-        self.resize(760, 640)
-        self.setMinimumSize(520, 400)  # 允许自由缩小；设置页有滚动容器兜底
+        self.resize(820, 780)
+        self.setMinimumSize(520, 420)  # 允许自由缩小；设置页有滚动容器兜底
         self._test_finished.connect(self._show_test_result)
 
         root = QWidget()
@@ -154,7 +154,6 @@ class MainWindow(QMainWindow):
         self.translate_btn.clicked.connect(self._on_translate_clicked)
         btn_row.addWidget(self.translate_btn)
         card_lay.addLayout(btn_row)
-        lay.addWidget(card)
 
         result_card = _glass_card()
         res_lay = QVBoxLayout(result_card)
@@ -173,7 +172,18 @@ class MainWindow(QMainWindow):
         self.result_view.setReadOnly(True)
         self.result_view.setPlaceholderText("译文会出现在这里")
         res_lay.addWidget(self.result_view, 1)
-        lay.addWidget(result_card, 1)
+
+        # 上下可拖拽分隔：原文区 / 译文区，译文默认更大
+        from PySide6.QtWidgets import QSplitter
+
+        split = QSplitter(Qt.Vertical)
+        split.setChildrenCollapsible(False)
+        split.addWidget(card)
+        split.addWidget(result_card)
+        split.setStretchFactor(0, 0)
+        split.setStretchFactor(1, 1)
+        split.setSizes([250, 470])
+        lay.addWidget(split, 1)
 
         self.source_edit.installEventFilter(self)
         self._on_lang_style_changed()
@@ -327,7 +337,6 @@ class MainWindow(QMainWindow):
         self.email_btn.clicked.connect(self._on_email_clicked)
         btn_row.addWidget(self.email_btn)
         card_lay.addLayout(btn_row)
-        lay.addWidget(card)
 
         result_card = _glass_card()
         res_lay = QVBoxLayout(result_card)
@@ -362,7 +371,18 @@ class MainWindow(QMainWindow):
         self.email_body.setReadOnly(True)
         self.email_body.setPlaceholderText("优化后的邮件正文会出现在这里")
         res_lay.addWidget(self.email_body, 1)
-        lay.addWidget(result_card, 1)
+
+        # 上下可拖拽分隔：草稿区 / 结果区，结果默认更大
+        from PySide6.QtWidgets import QSplitter
+
+        split = QSplitter(Qt.Vertical)
+        split.setChildrenCollapsible(False)
+        split.addWidget(card)
+        split.addWidget(result_card)
+        split.setStretchFactor(0, 0)
+        split.setStretchFactor(1, 1)
+        split.setSizes([240, 480])
+        lay.addWidget(split, 1)
         return page
 
     def _copy_text(self, text: str) -> None:
