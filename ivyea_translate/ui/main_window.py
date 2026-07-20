@@ -244,7 +244,10 @@ class MainWindow(QMainWindow):
         card_lay.addWidget(self.source_edit)
 
         btn_row = QHBoxLayout()
-        hint = QLabel("选中文字后按 Ctrl+C+C 即翻译 · 截图翻译 {shot}".format(
+        from ..platform_ui import double_copy_label
+
+        hint = QLabel("选中文字后按 {copy} 即翻译 · 截图翻译 {shot}".format(
+            copy=double_copy_label(),
             shot=self._pretty_hotkey(self.cfg.get("hotkeys.screenshot_translate", "")),
         ))
         hint.setObjectName("Hint")
@@ -333,7 +336,9 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _pretty_hotkey(combo: str) -> str:
-        return combo.replace("<", "").replace(">", "").replace("+", " + ").title()
+        from ..platform_ui import pretty_hotkey
+
+        return pretty_hotkey(combo)
 
     @staticmethod
     def _lang_label(code: str) -> str:
@@ -885,7 +890,9 @@ class MainWindow(QMainWindow):
         hk_form = QFormLayout()
         hk_form.setHorizontalSpacing(14)
         hk_form.setVerticalSpacing(10)
-        self.dblcopy_check = QCheckBox("选中文字后按 Ctrl+C+C 即翻译")
+        from ..platform_ui import double_copy_label
+
+        self.dblcopy_check = QCheckBox(f"选中文字后按 {double_copy_label()} 即翻译")
         self.dblcopy_check.setChecked(bool(self.cfg.get("double_copy.enabled", True)))
         hk_form.addRow("划词翻译", self.dblcopy_check)
         self.hk_shot_edit = QLineEdit(self.cfg.get("hotkeys.screenshot_translate", ""))

@@ -320,13 +320,16 @@ class TranslateApp(QApplication):
         self.cfg.save()
         from PySide6.QtWidgets import QMessageBox
 
+        from .platform_ui import double_copy_label, pretty_hotkey
+
         box = QMessageBox(self.window)
         box.setWindowTitle("欢迎使用 Ivyea Translate")
         box.setIcon(QMessageBox.Information)
         box.setText(
             "三步上手：\n\n"
-            "1. 选中任意文字，按 Ctrl+C+C（连按两下 C）—— 立即翻译\n"
-            "2. 按 Ctrl+Alt+S 框选屏幕 —— 截图翻译\n"
+            f"1. 选中任意文字，按 {double_copy_label()}（连按两下 C）—— 立即翻译\n"
+            f"2. 按 {pretty_hotkey(self.cfg.get('hotkeys.screenshot_translate', ''))} "
+            "框选屏幕 —— 截图翻译\n"
             "3. 免配置即用（内置免费翻译）；到「设置」填自己的大模型可解锁风格与邮件助手\n\n"
             "程序常驻托盘，点托盘图标可随时打开本窗口。"
         )

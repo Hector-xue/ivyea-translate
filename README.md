@@ -20,11 +20,33 @@
 
 - **IvyeaTranslate-Setup.exe** —— 安装版：向导安装、开始菜单+桌面快捷方式、可卸载（装到当前用户目录，无需管理员）
 - **IvyeaTranslate.exe** —— 单文件便携版：免安装双击即用，首次启动解压慢几秒
+- **IvyeaTranslate-mac-arm64.dmg** —— macOS（Apple Silicon）**Beta**：拖进「应用程序」即可，未签名，见下方 macOS 说明
 
 注意：
 - 全局快捷键用系统原生 RegisterHotKey 注册，若与其他软件冲突，设置页「状态」会红字提示具体哪条失败，改个组合键保存即可
 - 对以管理员权限运行的窗口取词/热键无效（Windows 安全机制），需要的话以管理员身份运行本软件
 - 排查问题看日志：`%USERPROFILE%\.ivyea-translate\app.log`
+
+## macOS（Beta，未签名）
+
+只在 CI 上验证过"能构建、能启动"，交互功能尚未在真机逐项验证，**当 Beta 用**。
+
+- 产物：`IvyeaTranslate-mac-arm64.dmg`（Apple Silicon；Intel 机型未提供）
+- 未做签名与公证，首次打开会被 Gatekeeper 拦（"无法验证开发者"）：**右键 → 打开**，或
+  `xattr -dr com.apple.quarantine /Applications/IvyeaTranslate.app`
+- 权限：全局快捷键需「系统设置 → 隐私与安全性 → 辅助功能」授权；截图翻译需「屏幕录制」授权
+- 划词是 **⌘+C+C**（复制键随平台变，界面文案会自动切换）
+- 应用内自动更新仅 Windows 安装版可用；macOS 上发现新版会引导到官网下载新 dmg
+
+### macOS 人工验证清单（待真机核验）
+
+- [ ] dmg 能挂载，拖进「应用程序」后可启动（右键→打开绕过 Gatekeeper）
+- [ ] 托盘（菜单栏）图标出现，点击能开主窗口
+- [ ] 授权「辅助功能」后 `⌃⌥S` 能唤起截图框选
+- [ ] 授权「屏幕录制」后截图 OCR 能识别出文字（否则截到的是黑屏/桌面壁纸）
+- [ ] 选中文字连按两次 ⌘+C 能弹出译文弹窗
+- [ ] Retina 屏上弹窗定位不偏移
+- [ ] 主窗口四个页签排版正常（含新的「清空」按钮与回译校对框高度）
 
 ## 自动更新
 
@@ -58,7 +80,10 @@ build.bat portable   :: 单文件便携版        -> dist\IvyeaTranslate.exe
 ```
 
 安装包：装 [Inno Setup 6](https://jrsoftware.org/isinfo.php) 后在文件夹版基础上 `iscc installer.iss` → `dist\IvyeaTranslate-Setup.exe`。
-CI 会在推 `v*` tag 时自动构建全部三种产物并挂到 Release。
+CI 会在推 `v*` tag 时自动构建全部三种 Windows 产物并挂到 Release。
+
+macOS（在 Mac 上）：`pyinstaller ivyea-translate-mac.spec` → `dist/IvyeaTranslate.app`；
+CI 的 `build-macos` job 会再用 `hdiutil` 打成 dmg 并挂到 Release。
 
 ## 开发与测试
 

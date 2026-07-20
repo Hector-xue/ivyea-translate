@@ -32,7 +32,7 @@ for a in json.load(sys.stdin)['assets']:
     print(a['name'] + '\t' + a['browser_download_url'])
 " | while IFS=$'\t' read -r name url; do
     case "$name" in
-        IvyeaTranslate.exe|IvyeaTranslate-Setup.exe)
+        IvyeaTranslate.exe|IvyeaTranslate-Setup.exe|IvyeaTranslate-mac-arm64.dmg)
             echo "  下载 $name"
             curl -fsSL --max-time 600 -o "$tmp/$name" "$url"
             ;;
@@ -44,6 +44,12 @@ done
 
 mv -f "$tmp/IvyeaTranslate-Setup.exe" "$DEST/IvyeaTranslate-Setup.exe"
 mv -f "$tmp/IvyeaTranslate.exe" "$DEST/IvyeaTranslate.exe"
+# macOS 是未签名 Beta，可能某个版本没出产物 -> 有才同步，缺了不算失败
+mac_url=""
+if [ -f "$tmp/IvyeaTranslate-mac-arm64.dmg" ]; then
+    mv -f "$tmp/IvyeaTranslate-mac-arm64.dmg" "$DEST/IvyeaTranslate-mac-arm64.dmg"
+    mac_url="$BASE_URL/IvyeaTranslate-mac-arm64.dmg"
+fi
 
 echo "$meta" | python3 -c "
 import json, sys
@@ -56,6 +62,7 @@ out = {
     'setup_url': '$BASE_URL/IvyeaTranslate-Setup.exe',
     'portable_url': '$BASE_URL/IvyeaTranslate.exe',
     'page_url': 'https://translate.ivyea.com/',
+    'mac_url': '$mac_url',  # 未签名 Beta；空串=该版本没出 mac 产物
 }
 json.dump(out, open('$DEST/version.json.tmp', 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
 "
