@@ -83,7 +83,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "timeout": 60,
     },
     "translate": {
-        "target_language": "zh-CN",
+        # 目标语言："auto"=智能方向(主语言文本→次语言,其余→主语言)，或具体语言码
+        "target_language": "auto",
+        "primary_language": "zh-CN",    # 自动方向的主语言
+        "secondary_language": "en",     # 自动方向的次语言
         "style": "general",
         # 翻译引擎：auto(配了Key用大模型,否则免费) / free(始终免费) / llm(始终大模型)
         "engine": "auto",
@@ -114,6 +117,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "auto_check": True,
         "feed_url": "https://translate.ivyea.com/download/version.json",
     },
+    "onboarded": False,  # 首次启动显示上手引导后置 True
 }
 
 
@@ -160,6 +164,10 @@ class Config:
         # v0.1.x 默认弹窗宽 420 偏小；等于旧默认值视为未自定义，升到新默认
         if ui.get("popup_width") == 420:
             ui["popup_width"] = DEFAULT_CONFIG["ui"]["popup_width"]
+        tr = self._data.get("translate", {})
+        # v0.8 起默认智能方向；旧默认 zh-CN 视为未自定义，升级到 auto
+        if tr.get("target_language") == "zh-CN":
+            tr["target_language"] = "auto"
         hk = self._data.get("hotkeys", {})
         # 已移除的快捷键/功能：清掉老配置里的残留键，避免误导
         hk.pop("show_main_window", None)

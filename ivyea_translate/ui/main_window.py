@@ -116,6 +116,7 @@ class MainWindow(QMainWindow):
         opts = QHBoxLayout()
         opts.addWidget(QLabel("目标语言"))
         self.lang_combo = QComboBox()
+        self.lang_combo.addItem(self._auto_label(), "auto")  # 智能方向
         for code, label in LANGUAGES:
             self.lang_combo.addItem(label, code)
         self._select_combo_data(self.lang_combo, self.cfg.get("translate.target_language"))
@@ -195,10 +196,30 @@ class MainWindow(QMainWindow):
     def _pretty_hotkey(combo: str) -> str:
         return combo.replace("<", "").replace(">", "").replace("+", " + ").title()
 
+    @staticmethod
+    def _lang_label(code: str) -> str:
+        return dict(LANGUAGES).get(code, code)
+
+    def _auto_label(self) -> str:
+        primary = self._lang_label(self.cfg.get("translate.primary_language", "zh-CN"))
+        secondary = self._lang_label(self.cfg.get("translate.secondary_language", "en"))
+        return f"自动（{primary} ↔ {secondary}）"
+
+    def _resolve_target_lang(self, text: str, setting: str) -> str:
+        if setting == "auto":
+            from ..langdetect import choose_target
+
+            return choose_target(
+                text,
+                self.cfg.get("translate.primary_language", "zh-CN"),
+                self.cfg.get("translate.secondary_language", "en"),
+            )
+        return setting
+
     def _on_lang_style_changed(self) -> None:
         lang = self.lang_combo.currentData()
         style = self.style_combo.currentData()
-        if style in ("american", "british") and lang != "en":
+        if style in ("american", "british") and lang not in ("en", "auto"):
             self.style_hint.setText("（美式/英式仅目标为英语时生效）")
         else:
             self.style_hint.setText("")
@@ -222,11 +243,11 @@ class MainWindow(QMainWindow):
         self.result_view.setPlainText("")
         self.translate_btn.setEnabled(False)
         self.translate_btn.setText("翻译中…")
-        lang = self.lang_combo.currentData()
         style = self.style_combo.currentData()
-        self._worker = TranslateWorker(client, text, lang, style, parent=self)
+        target = self._resolve_target_lang(text, self.lang_combo.currentData())
+        self._worker = TranslateWorker(client, text, target, style, parent=self)
         self._worker.chunk.connect(self._append_result)
-        self._worker.finished_ok.connect(lambda full: self._translate_done(text, full, lang, style))
+        self._worker.finished_ok.connect(lambda full: self._translate_done(text, full, target, style))
         self._worker.failed.connect(self._translate_failed)
         self._worker.start()
 
@@ -525,6 +546,24 @@ class MainWindow(QMainWindow):
         eng_hint.setObjectName("Hint")
         eng_hint.setWordWrap(True)
         eng_form.addRow("", eng_hint)
+        # 自动互译语言对（目标语言选"自动"时在这两者间智能切换）
+        pair_row = QHBoxLayout()
+        self.primary_lang_combo = QComboBox()
+        self.secondary_lang_combo = QComboBox()
+        for code, label in LANGUAGES:
+            self.primary_lang_combo.addItem(label, code)
+            self.secondary_lang_combo.addItem(label, code)
+        self._select_combo_data(self.primary_lang_combo, self.cfg.get("translate.primary_language", "zh-CN"))
+        self._select_combo_data(self.secondary_lang_combo, self.cfg.get("translate.secondary_language", "en"))
+        pair_row.addWidget(self.primary_lang_combo, 1)
+        arrow = QLabel("↔")
+        pair_row.addWidget(arrow)
+        pair_row.addWidget(self.secondary_lang_combo, 1)
+        eng_form.addRow("自动互译语言", pair_row)
+        pair_hint = QLabel("目标语言设为「自动」时：选中前者的文本→翻成后者，其余→翻成前者。")
+        pair_hint.setObjectName("Hint")
+        pair_hint.setWordWrap(True)
+        eng_form.addRow("", pair_hint)
         ec.addLayout(eng_form)
         lay.addWidget(eng_card)
 
@@ -765,7 +804,14 @@ class MainWindow(QMainWindow):
         self.cfg.set("hotkeys.screenshot_translate", self.hk_shot_edit.text().strip())
         self.cfg.set("double_copy.enabled", self.dblcopy_check.isChecked())
         self.cfg.set("screenshot.target_language", self.shot_lang_combo.currentData())
+        self.cfg.set("translate.primary_language", self.primary_lang_combo.currentData())
+        self.cfg.set("translate.secondary_language", self.secondary_lang_combo.currentData())
         self.cfg.save()
+        # 主/次语言改动后刷新翻译页"自动"项的显示文案
+        if hasattr(self, "lang_combo"):
+            idx = self.lang_combo.findData("auto")
+            if idx >= 0:
+                self.lang_combo.setItemText(idx, self._auto_label())
         self.save_status.setText("已保存 ✓")
         from PySide6.QtCore import QTimer
 

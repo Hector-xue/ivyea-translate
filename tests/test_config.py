@@ -6,7 +6,9 @@ from ivyea_translate.config import DEFAULT_CONFIG, Config, _deep_merge
 def test_defaults_when_no_file(tmp_path):
     cfg = Config(tmp_path / "config.json")
     assert cfg.get("provider.preset") == "deepseek"
-    assert cfg.get("translate.target_language") == "zh-CN"
+    assert cfg.get("translate.target_language") == "auto"
+    assert cfg.get("translate.primary_language") == "zh-CN"
+    assert cfg.get("translate.secondary_language") == "en"
     assert cfg.get("hotkeys.screenshot_translate") == "<ctrl>+<alt>+s"
     assert cfg.get("hotkeys.select_translate") is None  # 划词热键已删除
 

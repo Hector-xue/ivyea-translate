@@ -104,10 +104,13 @@ class TranslateApp(QApplication):
         self._setup_tray()
         ocr_engine.warmup_async()
 
+        from PySide6.QtCore import QTimer
+
+        # 首次启动显示上手引导
+        if not bool(self.cfg.get("onboarded", False)):
+            QTimer.singleShot(600, self._maybe_onboard)
         # 启动 8 秒后后台静默检查更新（失败无感知）
         if bool(self.cfg.get("update.auto_check", True)):
-            from PySide6.QtCore import QTimer
-
             QTimer.singleShot(8000, self._auto_check_update)
 
     # ---------- 装配 ----------
@@ -132,6 +135,13 @@ class TranslateApp(QApplication):
         act_shot.triggered.connect(self.trigger_screenshot_translate)
         menu.addAction(act_shot)
         menu.addSeparator()
+        # 临时暂停"连按两次 Ctrl+C"监听（大量复制代码时用）
+        self.act_pause = QAction("暂停划词翻译", menu)
+        self.act_pause.setCheckable(True)
+        self.act_pause.setChecked(not self.watcher.double_copy_enabled)
+        self.act_pause.toggled.connect(self._toggle_pause)
+        menu.addAction(self.act_pause)
+        menu.addSeparator()
         act_quit = QAction("退出", menu)
         act_quit.triggered.connect(self.request_quit)
         menu.addAction(act_quit)
@@ -148,6 +158,10 @@ class TranslateApp(QApplication):
         self.watcher.max_chars = int(self.cfg.get("double_copy.max_chars", 3000))
         self.watcher.double_copy_enabled = bool(self.cfg.get("double_copy.enabled", True))
 
+    def _toggle_pause(self, paused: bool) -> None:
+        """临时暂停/恢复"连按两次 Ctrl+C"监听（仅本次运行，不写配置）。"""
+        self.watcher.double_copy_enabled = not paused
+
     def mark_own_copy(self, text: str) -> None:
         """弹窗/主窗口'复制译文'时调用，防止双击复制被自家写入干扰。"""
         self.watcher.mark_own_copy(text)
@@ -161,6 +175,19 @@ class TranslateApp(QApplication):
         popup.show_at_cursor()
         self._start_translate(popup, text)
 
+    def _resolve_target(self, text: str, explicit: str = "") -> str:
+        """决定本次翻译的目标语言。explicit 非空时优先；"auto" 走智能方向。"""
+        setting = explicit or self.cfg.get("translate.target_language", "auto")
+        if setting == "auto":
+            from .langdetect import choose_target
+
+            return choose_target(
+                text,
+                self.cfg.get("translate.primary_language", "zh-CN"),
+                self.cfg.get("translate.secondary_language", "en"),
+            )
+        return setting
+
     def _start_translate(self, popup: TranslationPopup, text: str, target_lang: str = "") -> None:
         from .free_engine import resolve_engine
 
@@ -169,30 +196,23 @@ class TranslateApp(QApplication):
         except LLMError as e:
             popup.set_failed(str(e))
             return
+        target = self._resolve_target(text, target_lang)
         worker = TranslateWorker(
-            client,
-            text,
-            target_lang or self.cfg.get("translate.target_language", "zh-CN"),
-            self.cfg.get("translate.style", "general"),
+            client, text, target, self.cfg.get("translate.style", "general"),
         )
         self._workers.append(worker)
         worker.chunk.connect(popup.append_chunk)
         worker.finished_ok.connect(
-            lambda full, s=text: self._on_popup_done(popup, s, full)
+            lambda full, s=text, t=target: self._on_popup_done(popup, s, full, t)
         )
         worker.failed.connect(popup.set_failed)
         worker.finished.connect(lambda w=worker: self._workers.remove(w) if w in self._workers else None)
         popup.destroyed.connect(worker.cancel)
         worker.start()
 
-    def _on_popup_done(self, popup: TranslationPopup, source: str, result: str) -> None:
+    def _on_popup_done(self, popup: TranslationPopup, source: str, result: str, target: str) -> None:
         popup.set_done(result)
-        self.window.add_history(
-            source,
-            result,
-            self.cfg.get("translate.target_language", "zh-CN"),
-            self.cfg.get("translate.style", "general"),
-        )
+        self.window.add_history(source, result, target, self.cfg.get("translate.style", "general"))
 
     def _track_popup(self, popup: TranslationPopup) -> None:
         self._popups.append(popup)
@@ -245,6 +265,27 @@ class TranslateApp(QApplication):
         if popup is None:
             return
         popup.set_failed(f"识别失败：{message}")
+
+    # ---------- 首次引导 ----------
+
+    def _maybe_onboard(self) -> None:
+        if self.cfg.get("onboarded", False):
+            return
+        self.cfg.set("onboarded", True)
+        self.cfg.save()
+        from PySide6.QtWidgets import QMessageBox
+
+        box = QMessageBox(self.window)
+        box.setWindowTitle("欢迎使用 Ivyea Translate")
+        box.setIcon(QMessageBox.Information)
+        box.setText(
+            "三步上手：\n\n"
+            "1. 选中任意文字，连按两次 Ctrl+C —— 立即翻译\n"
+            "2. 按 Ctrl+Alt+S 框选屏幕 —— 截图翻译\n"
+            "3. 免配置即用（内置免费翻译）；到「设置」填自己的大模型可解锁风格与邮件助手\n\n"
+            "程序常驻托盘，点托盘图标可随时打开本窗口。"
+        )
+        box.exec()
 
     # ---------- 更新 ----------
 
