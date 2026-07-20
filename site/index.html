@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ivyea Translate — 随手即译的桌面 AI 翻译</title>
-<meta name="description" content="划词气泡、截图翻译、复制翻译。接入你自己的大模型，14 种语言、7 种风格，随手即译。Windows 桌面翻译软件。">
+<meta name="description" content="划词翻译（双击 Ctrl+C）、截图翻译、反向写作。内置免费引擎开箱即用，也可接自己的大模型。智能中英互译、14 种语言、7 种风格。Windows 桌面翻译软件。">
 <meta property="og:title" content="Ivyea Translate — 随手即译">
-<meta property="og:description" content="划词 · 截图 · 复制，接入你自己的大模型的桌面 AI 翻译。">
+<meta property="og:description" content="划词 · 截图 · 反向写作，内置免费引擎开箱即用的桌面 AI 翻译。">
 <meta property="og:image" content="https://translate.ivyea.com/assets/logo.png">
 <link rel="icon" href="assets/favicon.ico">
 <link rel="stylesheet" href="css/style.css">
@@ -74,8 +74,8 @@
             <path d="M15 20 c2-3 4-5 6-6" stroke="#fff" stroke-width="1.2"/>
           </svg>
         </div>
-        <h3>划词气泡</h3>
-        <p>选中任意文字，光标旁自然冒出一枚叶子图标——点一下，译文就在原文下方展开。不抢焦点，不打断阅读。</p>
+        <h3>划词翻译</h3>
+        <p>选中任意文字，<b>连按两次 Ctrl+C</b>，译文就在光标下方弹出。默认智能方向（中↔英自动），弹窗可拖动、可调大小；点「详解」还能看重点词读音、语法与更地道的说法。</p>
       </div>
       <div class="card">
         <div class="ico">
@@ -85,30 +85,29 @@
           </svg>
         </div>
         <h3>截图翻译</h3>
-        <p>框选屏幕任意区域，本地 OCR 识别后即刻翻译。译文弹窗永远长在框选区域<b>之外</b>，绝不遮挡原文。</p>
+        <p>按 Ctrl+Alt+S 框选屏幕任意区域，本地 OCR 识别后即刻翻译。译文弹窗永远长在框选区域<b>之外</b>，绝不遮挡原文。</p>
       </div>
       <div class="card">
         <div class="ico">
           <svg viewBox="0 0 32 32" width="34" height="34" fill="none" stroke="#5B9334" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="10" y="10" width="16" height="18" rx="3"/>
-            <path d="M22 10 V8 a3 3 0 0 0 -3-3 H9 a3 3 0 0 0 -3 3 v12 a3 3 0 0 0 3 3 h1" opacity="0.55"/>
-            <path d="M14 17 h8 M14 21 h8 M14 25 h5"/>
+            <path d="M7 5 h13 l6 6 v16 a2 2 0 0 1 -2 2 H7 a2 2 0 0 1 -2 -2 V7 a2 2 0 0 1 2 -2 z" opacity="0.55"/>
+            <path d="M11 15 h10 M11 19 h10 M11 23 h6"/>
           </svg>
         </div>
-        <h3>复制翻译</h3>
-        <p>开启监听后，Ctrl+C 复制的任何文本自动弹出译文。读外文文档时，翻译几乎是零动作的。</p>
+        <h3>反向写作</h3>
+        <p>用母语写要点，生成地道的外语邮件 / 消息 / 评论 / 社媒贴文，并<b>回译校对</b>确认意思没跑偏。写外文再也不心虚。</p>
       </div>
     </div>
 
     <div class="grid">
-      <div class="cell"><b>模型自由</b><span>任意 OpenAI 兼容接口：DeepSeek、OpenAI、OpenRouter、硅基流动或自建，Key 只存在你本机</span></div>
-      <div class="cell"><b>14 种语言</b><span>中英日韩法德西俄等互译，流式输出，边译边读</span></div>
-      <div class="cell"><b>7 种风格</b><span>美式 / 英式 / 正式 / 口语 / 学术 / 简洁，语体随场景切换</span></div>
+      <div class="cell"><b>免费引擎，开箱即用</b><span>内置 DeepL / Google / 必应 自动回退，装完不配置也能翻</span></div>
+      <div class="cell"><b>接自己的大模型</b><span>任意 OpenAI 兼容接口：DeepSeek、OpenAI、OpenRouter、硅基流动或自建，Key 只存本机</span></div>
+      <div class="cell"><b>智能方向</b><span>目标语言设为「自动」：选中中文→英文、其余→中文，无需手动切</span></div>
+      <div class="cell"><b>14 种语言 · 7 种风格</b><span>中英日韩法德西俄等互译；美式/英式/正式/口语/学术/简洁</span></div>
       <div class="cell"><b>本地 OCR</b><span>截图识别在本机完成，图片不上传任何服务器</span></div>
-      <div class="cell"><b>弹窗可塑</b><span>可拖动、可钉住、可调大小，译文历史自动沉淀</span></div>
-      <div class="cell"><b>轻量常驻</b><span>托盘常驻，全局快捷键可自定义，冲突逐条提示</span></div>
-      <div class="cell"><b>邮件助手</b><span>草稿一键重写成目标语言的地道邮件并自动总结主题，商务/友好/催促等六种语气</span></div>
-      <div class="cell"><b>自动更新</b><span>新版本托盘提示，一键静默升级自动重启</span></div>
+      <div class="cell"><b>详解模式</b><span>弹窗一键展开重点词读音、语法与更地道的说法，翻译顺手学外语</span></div>
+      <div class="cell"><b>弹窗可塑</b><span>可拖动、可钉住、边缘拖拽调大小，译文历史自动沉淀</span></div>
+      <div class="cell"><b>一键自动更新</b><span>新版本弹窗提示，点一下后台下载、静默安装、自动重启，无需去官网</span></div>
     </div>
   </section>
 

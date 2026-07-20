@@ -153,13 +153,27 @@ QComboBox::down-arrow {{
     margin-right: 8px;
 }}
 QComboBox QAbstractItemView {{
-    background: white;
-    border: 1px solid rgba(0, 0, 0, 0.06);
+    background: #FFFFFF;
+    border: 1px solid rgba(107, 165, 63, 0.22);
     border-radius: {RADIUS_SM}px;
-    padding: 4px;
-    selection-background-color: {ACCENT_SOFT};
-    selection-color: {TEXT_PRIMARY};
+    padding: 6px;
+    selection-background-color: transparent;
     outline: none;
+}}
+QComboBox QAbstractItemView::item {{
+    min-height: 30px;
+    padding: 6px 12px;
+    margin: 1px 2px;
+    border-radius: 8px;
+    color: {TEXT_PRIMARY};
+}}
+QComboBox QAbstractItemView::item:hover {{
+    background: {ACCENT_SOFT};
+    color: {ACCENT_HOVER};
+}}
+QComboBox QAbstractItemView::item:selected {{
+    background: {ACCENT};
+    color: white;
 }}
 QCheckBox {{
     spacing: 8px;

@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListView,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -30,6 +31,19 @@ from ..config import Config, LANGUAGES, PROVIDER_PRESETS, STYLES
 from ..llm import LLMError, client_from_config
 from ..translator import TranslateWorker
 from . import theme
+
+
+class QComboBox(QComboBox):  # noqa: F811  —— 全模块下拉框统一为"悬停滚轮不改值"
+    """悬停时滚轮不改选项（避免误触），并把滚轮交给父级滚动页面；
+    下拉列表用 QListView 以保证 QSS 美化生效。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFocusPolicy(Qt.StrongFocus)  # 去掉 WheelFocus：滚轮不再聚焦到它
+        self.setView(QListView())
+
+    def wheelEvent(self, event):
+        event.ignore()  # 不消费滚轮 -> 冒泡给 QScrollArea 滚动页面
 
 
 def _glass_card() -> QWidget:
@@ -805,38 +819,14 @@ class MainWindow(QMainWindow):
         self.update_btn.setVisible(True)
 
     def _on_apply_update(self) -> None:
-        from ..updater import UpdateDownloader, apply_update_and_quit, is_installed_copy
-
         feed = getattr(self, "_update_feed", None)
         if not feed:
             return
-        if not is_installed_copy():
-            # 便携版/源码运行：打开官网下载页
-            from PySide6.QtGui import QDesktopServices
-            from PySide6.QtCore import QUrl
-
-            QDesktopServices.openUrl(QUrl(feed.get("page_url", "https://translate.ivyea.com/")))
-            return
-        self.update_btn.setEnabled(False)
-        self.update_status.setText("下载中… 0%")
-        self._update_dl = UpdateDownloader(feed["setup_url"], feed["version"], parent=self)
-        self._update_dl.progress.connect(
-            lambda pct: self.update_status.setText(f"下载中… {pct}%")
-        )
-        self._update_dl.failed.connect(
-            lambda msg: (self.update_btn.setEnabled(True), self.update_status.setText(msg))
-        )
-        self._update_dl.finished_ok.connect(self._on_update_downloaded)
-        self._update_dl.start()
-
-    def _on_update_downloaded(self, setup_path: str) -> None:
-        from ..updater import apply_update_and_quit
         from PySide6.QtWidgets import QApplication
 
-        self.update_status.setText("安装中，应用即将重启…")
         app = QApplication.instance()
-        quit_cb = getattr(app, "request_quit", app.quit)
-        apply_update_and_quit(setup_path, quit_cb)
+        if app is not None and hasattr(app, "_start_update"):
+            app._start_update(feed)  # 统一走 app 的一键更新（进度条→静默安装→重启）
 
     def _on_preset_changed(self) -> None:
         key = self.preset_combo.currentData()

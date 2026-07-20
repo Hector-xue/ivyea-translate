@@ -340,14 +340,71 @@ class TranslateApp(QApplication):
         self._upd_checker.start()
 
     def _on_update_found(self, feed: dict) -> None:
-        self.window.show_update_available(feed)
-        if self.tray:
-            self.tray.showMessage(
-                "Ivyea Translate",
-                f"发现新版本 v{feed['version']}，可在设置页一键更新",
-                QSystemTrayIcon.Information,
-                4000,
-            )
+        self.window.show_update_available(feed)  # 设置页也留一个入口
+        # 同一版本只主动弹一次，避免每次启动打扰
+        if str(feed.get("version")) == str(self.cfg.get("update.prompted_version", "")):
+            return
+        self.cfg.set("update.prompted_version", feed.get("version", ""))
+        self.cfg.save()
+        from PySide6.QtWidgets import QMessageBox
+
+        box = QMessageBox(self.window)
+        box.setWindowTitle("发现新版本")
+        box.setIcon(QMessageBox.Information)
+        notes = (feed.get("notes") or "").strip()
+        text = (f"Ivyea Translate v{feed['version']} 可用。\n\n"
+                "点「立即更新」将自动下载并安装，完成后自动重启——无需手动去官网下载。")
+        if notes:
+            text += f"\n\n更新内容：\n{notes[:280]}"
+        box.setText(text)
+        now_btn = box.addButton("立即更新", QMessageBox.AcceptRole)
+        box.addButton("以后", QMessageBox.RejectRole)
+        box.exec()
+        if box.clickedButton() is now_btn:
+            self._start_update(feed)
+
+    def _start_update(self, feed: dict) -> None:
+        """一键更新：下载(进度条)→静默安装→自动重启。便携版引导到官网。"""
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtCore import QUrl
+        from PySide6.QtWidgets import QMessageBox, QProgressDialog
+        from .updater import UpdateDownloader, apply_update_and_quit, is_installed_copy
+
+        if not is_installed_copy():
+            QMessageBox.information(
+                self.window, "更新",
+                "便携版无法自替换，请到官网下载新版覆盖使用。")
+            QDesktopServices.openUrl(QUrl(feed.get("page_url", "https://translate.ivyea.com/")))
+            return
+
+        dlg = QProgressDialog("正在下载新版本…", "取消", 0, 100, self.window)
+        dlg.setWindowTitle("更新 Ivyea Translate")
+        dlg.setMinimumWidth(380)
+        dlg.setAutoClose(False)
+        dlg.setAutoReset(False)
+        self._upd_cancelled = False
+        dlg.canceled.connect(lambda: setattr(self, "_upd_cancelled", True))
+
+        dl = UpdateDownloader(feed["setup_url"], feed["version"], parent=self)
+        self._update_dl = dl
+        dl.progress.connect(dlg.setValue)
+
+        def done(path):
+            if self._upd_cancelled:
+                return
+            dlg.setLabelText("下载完成，正在安装并重启…")
+            dlg.setValue(100)
+            apply_update_and_quit(path, self.request_quit)
+
+        def failed(msg):
+            dlg.close()
+            if not self._upd_cancelled:
+                QMessageBox.warning(self.window, "更新失败", f"{msg}\n可稍后重试，或到官网手动下载。")
+
+        dl.finished_ok.connect(done)
+        dl.failed.connect(failed)
+        dl.start()
+        dlg.show()
 
     # ---------- 退出 ----------
 
