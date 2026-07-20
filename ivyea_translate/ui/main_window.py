@@ -60,6 +60,20 @@ def _glass_card() -> QWidget:
     return card
 
 
+class _FlexText(QPlainTextEdit):
+    """高度完全交给布局 stretch 决定的文本框。
+
+    QPlainTextEdit 默认 sizeHint 高约 192px，与内容无关；结果区叠几个就把页面
+    顶得高于滚动视口，逼出滚动条并把下方的框推到折叠线以外。这里让 sizeHint
+    退回最小高度，剩余空间按 addWidget 的 stretch 分配。
+    """
+
+    def sizeHint(self):
+        hint = super().sizeHint()
+        hint.setHeight(self.minimumHeight() or hint.height())
+        return hint
+
+
 def _scrollable(inner: QWidget) -> QScrollArea:
     """把页面包进滚动容器：窗口变小时整页滚动，不再挤压/溢出/裁切。"""
     sa = QScrollArea()
@@ -237,6 +251,10 @@ class MainWindow(QMainWindow):
         hint.setWordWrap(True)  # 窄窗自动换行，避免长文案顶宽导致横向溢出
         btn_row.addWidget(hint, 1)
         btn_row.addStretch(1)
+        self.clear_btn = QPushButton("清空")
+        self.clear_btn.setObjectName("Ghost")
+        self.clear_btn.clicked.connect(self._clear_translate)
+        btn_row.addWidget(self.clear_btn)
         self.translate_btn = QPushButton("翻译")
         self.translate_btn.setObjectName("Primary")
         self.translate_btn.setMinimumWidth(120)
@@ -267,8 +285,38 @@ class MainWindow(QMainWindow):
         lay.addWidget(result_card, 1)  # 译文区：占据剩余空间
 
         self.source_edit.installEventFilter(self)
+        # 源文被清空时译文一起清掉，不再残留上一条结果（译文只读，用户手删不掉）
+        self.source_edit.textChanged.connect(self._on_source_changed)
         self._on_lang_style_changed()
         return _scrollable(page)
+
+    def _on_source_changed(self) -> None:
+        if self.source_edit.toPlainText().strip():
+            return
+        if self._worker is not None and self._worker.isRunning():
+            return  # 翻译进行中不打断流式回填
+        self.result_view.setPlainText("")
+
+    @staticmethod
+    def _detach_worker(worker) -> None:
+        """cancel 是协作式的，已在途的 chunk/finished 仍可能回填 → 断开信号再清空。"""
+        if worker is None:
+            return
+        worker.cancel()
+        for sig in (worker.chunk, worker.finished_ok, worker.failed):
+            try:
+                sig.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+
+    def _clear_translate(self) -> None:
+        if self._worker is not None and self._worker.isRunning():
+            self._detach_worker(self._worker)
+            self.translate_btn.setEnabled(True)
+            self.translate_btn.setText("翻译")
+        self.source_edit.setPlainText("")
+        self.result_view.setPlainText("")
+        self.source_edit.setFocus()
 
     def eventFilter(self, obj, event):
         if obj is self.source_edit and event.type() == event.Type.KeyPress:
@@ -414,13 +462,20 @@ class MainWindow(QMainWindow):
         self.email_hint.setWordWrap(True)
         card_lay.addWidget(self.email_hint)
 
-        self.email_source = QPlainTextEdit()
-        self.email_source.setMinimumHeight(88)
+        self.email_source = _FlexText()
+        self.email_source.setMinimumHeight(100)
         self.email_source.setMaximumHeight(180)  # 草稿区不喧宾夺主，长文本内部滚动
         card_lay.addWidget(self.email_source)
 
+        # 草稿清空时结果一起清掉（结果只读，用户手删不掉）
+        self.email_source.textChanged.connect(self._on_email_source_changed)
+
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
+        self.email_clear_btn = QPushButton("清空")
+        self.email_clear_btn.setObjectName("Ghost")
+        self.email_clear_btn.clicked.connect(self._clear_email)
+        btn_row.addWidget(self.email_clear_btn)
         self.email_btn = QPushButton("生成")
         self.email_btn.setObjectName("Primary")
         self.email_btn.setMinimumWidth(130)
@@ -460,22 +515,23 @@ class MainWindow(QMainWindow):
         copy_body_btn.clicked.connect(lambda: self._copy_text(self.email_body.toPlainText()))
         body_head.addWidget(copy_body_btn)
         res_lay.addLayout(body_head)
-        self.email_body = QPlainTextEdit()
+        self.email_body = _FlexText()
         self.email_body.setReadOnly(True)
-        self.email_body.setMinimumHeight(150)  # 防止被主题/回译挤成一两行
+        self.email_body.setMinimumHeight(140)  # 防止被主题/回译挤成一两行
         self.email_body.setPlaceholderText("生成的地道外语会出现在这里")
-        res_lay.addWidget(self.email_body, 1)
+        res_lay.addWidget(self.email_body, 3)
 
         # 回译校对：把生成结果译回母语，确认意思没跑偏
         self.email_backtrans_label = QLabel("回译校对")
         self.email_backtrans_label.setObjectName("Hint")
         res_lay.addWidget(self.email_backtrans_label)
-        self.email_backtrans = QPlainTextEdit()
+        self.email_backtrans = _FlexText()
         self.email_backtrans.setReadOnly(True)
         self.email_backtrans.setPlaceholderText("生成后自动把结果译回母语，供你确认含义")
-        self.email_backtrans.setMaximumHeight(96)
+        # 回译常常和正文一样长，96px 死高度浏览太别扭 → 给足最小高度并随窗口一起长
+        self.email_backtrans.setMinimumHeight(125)
         self.email_backtrans.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 13px;")
-        res_lay.addWidget(self.email_backtrans)
+        res_lay.addWidget(self.email_backtrans, 2)
 
         lay.addWidget(card)            # 草稿区：紧凑
         lay.addWidget(result_card, 1)  # 结果区：占据剩余空间
@@ -507,6 +563,30 @@ class MainWindow(QMainWindow):
         self.email_body_label.setText("正文" if want_subject else "生成结果")
         self.cfg.set("email.scenario", scen)
         self.cfg.save()
+
+    def _on_email_source_changed(self) -> None:
+        if self.email_source.toPlainText().strip():
+            return
+        worker = getattr(self, "_email_worker", None)
+        if worker is not None and worker.isRunning():
+            return  # 生成进行中不打断流式回填
+        self._reset_email_results()
+
+    def _reset_email_results(self) -> None:
+        self.email_subject.clear()
+        self.email_body.setPlainText("")
+        self.email_backtrans.setPlainText("")
+
+    def _clear_email(self) -> None:
+        for name in ("_email_worker", "_bt_worker"):
+            worker = getattr(self, name, None)
+            if worker is not None and worker.isRunning():
+                self._detach_worker(worker)
+        self.email_btn.setEnabled(True)
+        self.email_btn.setText("生成")
+        self.email_source.setPlainText("")
+        self._reset_email_results()
+        self.email_source.setFocus()
 
     def _copy_text(self, text: str) -> None:
         if text:
@@ -542,9 +622,7 @@ class MainWindow(QMainWindow):
         self.cfg.set("email.target_language", lang)
         self.cfg.set("email.tone", tone)
         self.cfg.save()
-        self.email_subject.clear()
-        self.email_body.setPlainText("")
-        self.email_backtrans.setPlainText("")
+        self._reset_email_results()
         self.email_btn.setEnabled(False)
         self.email_btn.setText("生成中…")
         self._email_worker = TranslateWorker(
