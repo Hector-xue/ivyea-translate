@@ -5,7 +5,7 @@
 ; Per-user install (no admin/UAC), Start Menu + optional desktop shortcut, uninstaller.
 
 #define AppName "Ivyea Translate"
-#define AppVersion "0.14.0"
+#define AppVersion "0.15.0"
 #define AppExe "IvyeaTranslate.exe"
 
 [Setup]

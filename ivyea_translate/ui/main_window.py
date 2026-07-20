@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -52,6 +53,20 @@ def _glass_card() -> QWidget:
     return card
 
 
+def _scrollable(inner: QWidget) -> QScrollArea:
+    """把页面包进滚动容器：窗口变小时整页滚动，不再挤压/溢出/裁切。"""
+    sa = QScrollArea()
+    sa.setWidgetResizable(True)
+    sa.setFrameShape(QScrollArea.NoFrame)
+    sa.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    sa.setStyleSheet(
+        "QScrollArea { background: transparent; }"
+        " QScrollArea > QWidget > QWidget { background: transparent; }"
+    )
+    sa.setWidget(inner)
+    return sa
+
+
 class MainWindow(QMainWindow):
     settings_saved = Signal()
     # 测试连接在后台线程跑，结果必须经信号回主线程；
@@ -68,9 +83,6 @@ class MainWindow(QMainWindow):
         self._worker: Optional[TranslateWorker] = None
         self._history_path = cfg.path.parent / "history.json"
         self._history: List[dict] = self._load_history()
-        # (splitter, 结果区占比) —— 窗口显示后按真实高度设分割，避免 setSizes 早调用失效
-        self._splitters: List[tuple] = []
-        self._splits_applied = False
 
         self.setWindowTitle("Ivyea Translate")
         self.resize(820, 780)
@@ -121,7 +133,7 @@ class MainWindow(QMainWindow):
     def _build_translate_tab(self) -> QWidget:
         page = QWidget()
         lay = QVBoxLayout(page)
-        lay.setContentsMargins(0, 12, 0, 0)
+        lay.setContentsMargins(0, 12, 8, 12)
         lay.setSpacing(12)
 
         card = _glass_card()
@@ -155,7 +167,8 @@ class MainWindow(QMainWindow):
 
         self.source_edit = QPlainTextEdit()
         self.source_edit.setPlaceholderText("输入或粘贴要翻译的内容…（Ctrl+Enter 翻译）")
-        self.source_edit.setMinimumHeight(120)
+        self.source_edit.setMinimumHeight(88)
+        self.source_edit.setMaximumHeight(180)  # 源文区不喧宾夺主，长文本内部滚动
         card_lay.addWidget(self.source_edit)
 
         btn_row = QHBoxLayout()
@@ -187,25 +200,16 @@ class MainWindow(QMainWindow):
         res_lay.addLayout(res_head)
         self.result_view = QPlainTextEdit()
         self.result_view.setReadOnly(True)
+        self.result_view.setMinimumHeight(220)  # 译文区始终有足够高度浏览
         self.result_view.setPlaceholderText("译文会出现在这里")
         res_lay.addWidget(self.result_view, 1)
 
-        # 上下可拖拽分隔：原文区 / 译文区，译文默认更大
-        from PySide6.QtWidgets import QSplitter
-
-        split = QSplitter(Qt.Vertical)
-        split.setChildrenCollapsible(False)
-        split.addWidget(card)
-        split.addWidget(result_card)
-        split.setStretchFactor(0, 0)
-        split.setStretchFactor(1, 1)
-        split.setSizes([250, 470])
-        lay.addWidget(split, 1)
-        self._splitters.append((split, 0.55))  # 译文区约占 55%
+        lay.addWidget(card)            # 源文区：紧凑
+        lay.addWidget(result_card, 1)  # 译文区：占据剩余空间
 
         self.source_edit.installEventFilter(self)
         self._on_lang_style_changed()
-        return page
+        return _scrollable(page)
 
     def eventFilter(self, obj, event):
         if obj is self.source_edit and event.type() == event.Type.KeyPress:
@@ -311,7 +315,7 @@ class MainWindow(QMainWindow):
 
         page = QWidget()
         lay = QVBoxLayout(page)
-        lay.setContentsMargins(0, 12, 0, 0)
+        lay.setContentsMargins(0, 12, 8, 12)
         lay.setSpacing(12)
 
         card = _glass_card()
@@ -352,7 +356,8 @@ class MainWindow(QMainWindow):
         card_lay.addWidget(self.email_hint)
 
         self.email_source = QPlainTextEdit()
-        self.email_source.setMinimumHeight(100)
+        self.email_source.setMinimumHeight(88)
+        self.email_source.setMaximumHeight(180)  # 草稿区不喧宾夺主，长文本内部滚动
         card_lay.addWidget(self.email_source)
 
         btn_row = QHBoxLayout()
@@ -413,20 +418,10 @@ class MainWindow(QMainWindow):
         self.email_backtrans.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 13px;")
         res_lay.addWidget(self.email_backtrans)
 
-        # 上下可拖拽分隔：草稿区 / 结果区，结果默认更大
-        from PySide6.QtWidgets import QSplitter
-
-        split = QSplitter(Qt.Vertical)
-        split.setChildrenCollapsible(False)
-        split.addWidget(card)
-        split.addWidget(result_card)
-        split.setStretchFactor(0, 0)
-        split.setStretchFactor(1, 1)
-        split.setSizes([220, 500])
-        lay.addWidget(split, 1)
-        self._splitters.append((split, 0.62))  # 结果区(正文+回译)约占 62%
+        lay.addWidget(card)            # 草稿区：紧凑
+        lay.addWidget(result_card, 1)  # 结果区：占据剩余空间
         self._on_scenario_changed()
-        return page
+        return _scrollable(page)
 
     def _on_scenario_changed(self) -> None:
         from ..translator import COMPOSE_SCENARIOS
@@ -910,22 +905,6 @@ class MainWindow(QMainWindow):
         else:
             self.hotkey_status.setStyleSheet("color: #3AA675;")
             self.hotkey_status.setText("全局快捷键已生效")
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        # 首次显示后再按真实高度设分割比例（此前 splitter 高度为 0，setSizes 不生效）
-        if not self._splits_applied:
-            self._splits_applied = True
-            from PySide6.QtCore import QTimer
-
-            QTimer.singleShot(0, self._apply_split_sizes)
-
-    def _apply_split_sizes(self) -> None:
-        for split, result_ratio in self._splitters:
-            h = split.height()
-            if h > 120:
-                top = int(h * (1 - result_ratio))
-                split.setSizes([top, h - top])
 
     # 关窗只是隐藏（常驻托盘）；退出流程中必须放行
     def closeEvent(self, event):
