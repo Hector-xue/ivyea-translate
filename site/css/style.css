@@ -181,6 +181,13 @@ header.nav nav a.gh {
 }
 .btn.ghost:hover { transform: translateY(-2px); background: #fff; }
 
+.plat-note {
+  margin-top: 14px;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  letter-spacing: .01em;
+}
+
 .hint {
   margin-top: 46px;
   font-size: 13px;
@@ -310,6 +317,12 @@ section h2 {
   color: var(--accent-deep);
   background: rgba(107, 165, 63, 0.14);
   border: 1px solid rgba(107, 165, 63, 0.34);
+}
+/* 主按钮是实心绿：徽标沿用浅绿字/浅绿底会糊成一片，压不出对比度 */
+.btn.primary .tag-beta {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.5);
 }
 .req { margin-top: 30px; color: var(--ink-3); font-size: 13px; }
 .req a { color: var(--accent-deep); }

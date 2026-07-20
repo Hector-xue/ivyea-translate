@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ivyea Translate — 随手即译的桌面 AI 翻译</title>
-<meta name="description" content="划词翻译（Ctrl+C+C）、截图翻译、反向写作。内置免费引擎开箱即用，也可接自己的大模型。智能中英互译、14 种语言、7 种风格。Windows 桌面翻译软件。">
+<meta name="description" content="划词翻译（Ctrl+C+C）、截图翻译、反向写作。内置免费引擎开箱即用，也可接自己的大模型。智能中英互译、14 种语言、7 种风格。Windows 桌面翻译软件，macOS 版 Beta。">
 <meta property="og:title" content="Ivyea Translate — 随手即译">
 <meta property="og:description" content="划词 · 截图 · 反向写作，内置免费引擎开箱即用的桌面 AI 翻译。">
 <meta property="og:image" content="https://translate.ivyea.com/assets/logo.png">
@@ -42,14 +42,20 @@
   <section class="hero">
     <h1>让翻译，<em>自然生长</em></h1>
     <p class="sub">划词 · 截图 · 复制，随手即译。<br>接入你自己的大模型，翻译成为桌面上最顺手的那个动作。</p>
-    <div class="cta">
-      <a class="btn primary" href="/download/IvyeaTranslate-Setup.exe">
+    <!-- 顺序默认 Windows 优先；下方脚本检测到 macOS 访客会把 dmg 提到首位并置为主按钮。
+         无 JS 时三个按钮照样都在，不会漏掉任何平台。 -->
+    <div class="cta" id="hero-cta">
+      <a class="btn primary" data-plat="win" href="/download/IvyeaTranslate-Setup.exe">
         下载 Windows 安装版
       </a>
-      <a class="btn ghost" href="/download/IvyeaTranslate.exe">
+      <a class="btn ghost" data-plat="win" href="/download/IvyeaTranslate.exe">
         便携版 .exe
       </a>
+      <a class="btn ghost" data-plat="mac" href="/download/IvyeaTranslate-mac-arm64.dmg">
+        下载 macOS 版 <span class="tag-beta">Beta</span>
+      </a>
     </div>
+    <p class="plat-note">Windows 10/11 · macOS (Apple Silicon，Beta，未签名需右键→打开)</p>
     <div id="ivy-hint" class="hint">移动鼠标让常春藤生长 · 停留种芽 · 点击爆发</div>
     <a class="scroll-cue" href="#showcase" aria-label="向下滚动">↓</a>
   </section>
@@ -167,5 +173,26 @@
 </footer>
 
 <script src="js/ivy.js" defer></script>
+<script>
+// 首屏按访客系统排下载按钮：Mac 访客先看到 dmg，别让他去点 .exe。
+// 失败/未知系统时保持 HTML 里的 Windows 优先顺序。
+(function () {
+  var ua = navigator.userAgent || "";
+  var plat = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "";
+  var isMac = /Mac/i.test(plat) || (/Macintosh|Mac OS X/i.test(ua) && !/iPhone|iPad/i.test(ua));
+  if (!isMac) return;
+  var cta = document.getElementById("hero-cta");
+  if (!cta) return;
+  var mac = cta.querySelector('[data-plat="mac"]');
+  if (!mac) return;
+  cta.insertBefore(mac, cta.firstElementChild);
+  mac.classList.remove("ghost");
+  mac.classList.add("primary");
+  cta.querySelectorAll('[data-plat="win"]').forEach(function (a) {
+    a.classList.remove("primary");
+    a.classList.add("ghost");
+  });
+})();
+</script>
 </body>
 </html>
