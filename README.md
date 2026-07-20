@@ -4,6 +4,33 @@
 **内置免费翻译引擎（DeepL / Google / 必应 自动回退），装完即用，无需任何配置**；
 配置你自己的大模型（任意 OpenAI 兼容接口）可解锁风格控制（美式 / 英式 / 正式 / 口语 / 学术 / 简洁）、邮件改写与更高翻译质量。
 
+---
+
+## 交流与反馈
+
+欢迎扫码加入微信群，反馈 Bug、交流 Ivyea Translate 使用经验、AI 工具与亚马逊运营相关知识。**也欢迎提改进建议**——功能需求、交互优化、文档纠错都行，可在群里直接说，或到 GitHub 提 [Issue](https://github.com/Hector-xue/ivyea-translate/issues) / PR。群二维码可能会过期；如果扫码失效，可先关注公众号，再获取最新群二维码。
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/assets/wechat-group-qr.png" alt="Ivyea 微信交流群二维码" width="300" />
+      <br />
+      <strong>微信群：Ivyea 的精神股东们</strong>
+      <br />
+      <sub>反馈 Bug / 交流 AI 与运营 / 提改进建议</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/assets/wechat-official-account-qr.jpg" alt="Ivyea 公众号二维码" width="220" />
+      <br />
+      <strong>公众号</strong>
+      <br />
+      <sub>群二维码失效时，关注后获取最新版</sub>
+    </td>
+  </tr>
+</table>
+
+---
+
 ## 功能
 
 | 功能 | 触发方式 | 行为 |
