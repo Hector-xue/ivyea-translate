@@ -216,7 +216,9 @@ header.nav nav a.gh {
 .shot-wrap { position: relative; max-width: 860px; width: 100%; }
 /* 截图是 2x 的 PNG，自带窗口圆角（透明角）：这里的圆角要跟图里的对齐，
    描边则去掉——图里已经有窗体描边，再叠一圈会出现双边 */
-.shot { max-width: 100%; }
+/* height: auto 必须有：img 上写了固有尺寸 height="1320"（用来占位防抖版），
+   没有它这个属性会被当成真实高度，图片被拉成又高又窄 */
+.shot { max-width: 100%; height: auto; }
 .shot.main {
   width: 100%;
   display: block;
