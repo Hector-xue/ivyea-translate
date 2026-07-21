@@ -212,8 +212,38 @@ header.nav nav a.gh {
 @keyframes bob { 50% { transform: translate(-50%, 8px); } }
 
 /* ---------- 截图展示 ---------- */
-.showcase { padding: 40px 20px 90px; display: flex; justify-content: center; }
-.shot-wrap { position: relative; max-width: 860px; width: 100%; }
+/* overflow-x: clip —— 装饰柔光比展位宽，别让它把页面撑出横向滚动（只裁横向，
+   纵向仍要让弹窗图溢出到展位外） */
+.showcase { padding: 40px 20px 110px; display: flex; justify-content: center; overflow-x: clip; }
+.shot-wrap { position: relative; max-width: 860px; width: 100%; z-index: 0; }
+/* 截图背后的装饰：一块毛玻璃托板 + 几团柔光。
+   两层顺序（都在图片之下）：柔光(-2) -> 毛玻璃(-1) -> 截图。
+   柔光是给毛玻璃"有东西可糊"，否则 backdrop-filter 糊的是纯色，看不出玻璃感。 */
+.shot-wrap::after {
+  content: "";
+  position: absolute;
+  inset: -13% -9% -16%;
+  background:
+    radial-gradient(38% 46% at 12% 16%, rgba(126, 182, 86, 0.40), transparent 70%),
+    radial-gradient(42% 52% at 88% 84%, rgba(86, 150, 60, 0.32), transparent 72%),
+    radial-gradient(30% 34% at 72% 6%, rgba(214, 236, 190, 0.55), transparent 70%);
+  filter: blur(30px);
+  z-index: -2;
+  pointer-events: none;
+}
+.shot-wrap::before {
+  content: "";
+  position: absolute;
+  inset: -26px -30px -34px;
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(16px) saturate(1.15);
+  -webkit-backdrop-filter: blur(16px) saturate(1.15);
+  box-shadow: 0 30px 70px rgba(60, 90, 40, 0.14);
+  z-index: -1;
+  pointer-events: none;
+}
 /* 截图是 2x 的 PNG，自带窗口圆角（透明角）：这里的圆角要跟图里的对齐，
    描边则去掉——图里已经有窗体描边，再叠一圈会出现双边 */
 /* height: auto 必须有：img 上写了固有尺寸 height="1320"（用来占位防抖版），
@@ -228,9 +258,9 @@ header.nav nav a.gh {
 /* 弹窗那张图连自绘投影一起截下来了，不能再叠 CSS 投影（会在透明边上画出方角） */
 .shot.popup {
   position: absolute;
-  width: 52%;
-  right: -6%;
-  bottom: -11%;
+  width: 44%;
+  right: -5%;
+  bottom: -9%;
 }
 
 /* ---------- 功能 ---------- */
@@ -368,6 +398,9 @@ footer a:hover { color: var(--accent-deep); }
 
   .showcase { padding: 20px 16px 56px; }
   .shot.popup { position: static; width: 78%; margin: 14px auto 0; display: block; }
+  /* 手机上弹窗改为静态排在下方，毛玻璃托板要跟着把它一起兜住 */
+  .shot-wrap::before { inset: -14px -14px -18px; border-radius: 20px; }
+  .shot-wrap::after { inset: -10% -8% -12%; }
 
   section h2 { margin-bottom: 30px; }
   .features { padding: 40px 18px 20px; }
