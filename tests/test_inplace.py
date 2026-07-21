@@ -1,8 +1,7 @@
-"""原位翻译：坐标换算、段落切分、覆盖层行为。"""
+"""原位翻译：坐标换算、段落合并、卡片排版、覆盖层交互。"""
 import pytest
 
 from ivyea_translate.ocr import OcrBlock, bounding_block
-from ivyea_translate.translator import join_blocks, split_translation
 
 
 # ---------- 坐标换算（纯函数） ----------
@@ -29,28 +28,35 @@ def test_block_rect_never_goes_negative():
     assert r.x() == 0 and r.y() == 0
 
 
-# ---------- 段落切分 ----------
+# ---------- 段落合并（原位专用） ----------
 
-def test_split_translation_matches_block_count():
-    assert split_translation("一\n\n二\n\n三", 3) == ["一", "二", "三"]
+def test_merge_near_blocks_joins_close_paragraphs():
+    """OCR 的分段偏碎，贴回屏幕会是一堆小卡片；靠得近的要并成一块。"""
+    from ivyea_translate.ocr import merge_near_blocks
 
-
-def test_split_translation_tolerates_extra_blank_lines():
-    assert split_translation("一\n\n\n  \n\n二", 2) == ["一", "二"]
-
-
-def test_split_translation_degrades_when_count_mismatch():
-    """段数对不上就返回空，让调用方整段贴一张卡——绝不错位。"""
-    assert split_translation("一\n\n二", 3) == []
-    assert split_translation("只有一段", 2) == []
+    blocks = [OcrBlock("first", 20, 20, 300, 30, line_h=15, lines=2),
+              OcrBlock("second", 20, 62, 300, 30, line_h=15, lines=2)]  # 间距 12 < 1.8×15
+    merged = merge_near_blocks(blocks, gap_factor=1.8)
+    assert len(merged) == 1
+    assert merged[0].text == "first\n\nsecond"
+    assert merged[0].y == 20 and merged[0].y + merged[0].h == 92
 
 
-def test_split_translation_single_block_keeps_everything():
-    assert split_translation("一\n\n二", 1) == ["一\n\n二"]
+def test_merge_near_blocks_keeps_far_paragraphs_apart():
+    from ivyea_translate.ocr import merge_near_blocks
+
+    blocks = [OcrBlock("first", 20, 20, 300, 30, line_h=15),
+              OcrBlock("second", 20, 200, 300, 30, line_h=15)]
+    assert len(merge_near_blocks(blocks, gap_factor=1.8)) == 2
 
 
-def test_join_blocks_skips_empty():
-    assert join_blocks(["a", "  ", "b"]) == "a\n\nb"
+def test_merge_near_blocks_keeps_side_by_side_columns():
+    """左右分栏不能并：横向几乎不重叠说明是两栏，不是上下文。"""
+    from ivyea_translate.ocr import merge_near_blocks
+
+    blocks = [OcrBlock("left", 0, 20, 200, 30, line_h=15),
+              OcrBlock("right", 400, 30, 200, 30, line_h=15)]
+    assert len(merge_near_blocks(blocks, gap_factor=1.8)) == 2
 
 
 # ---------- 降级用的大框 ----------
@@ -88,7 +94,7 @@ def test_overlay_cards_land_on_block_positions(qapp):
     rect, text, px = ov._cards[0]
     assert text == "译文一段"
     assert rect.contains(20 + 5, 30 + 5)   # 卡片盖住原文位置
-    assert px >= 9
+    assert px >= 11
     ov.close()
 
 
@@ -124,4 +130,114 @@ def test_font_shrinks_to_fit_small_block(qapp):
 
     big = fit_font_px("短", 300, 40, 20)
     small = fit_font_px("这是一段非常非常长的译文" * 6, 300, 40, 20)
-    assert big > small >= 9
+    assert big > small >= 11
+
+
+# ---------- 必须关得掉（v0.25.0 的头号问题） ----------
+
+def test_overlay_can_take_keyboard_focus(qapp):
+    """置顶覆盖层若不接受焦点，Esc 根本到不了它 —— 用户就只能干瞪眼。"""
+    from PySide6.QtCore import QRect, Qt
+
+    from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
+
+    ov = InPlaceOverlay(QRect(0, 0, 400, 200), _shot(qapp), 1.0)
+    assert ov.focusPolicy() == Qt.StrongFocus
+    ov.close()
+
+
+def test_escape_closes_overlay(qapp):
+    from PySide6.QtCore import QEvent, QRect, Qt
+    from PySide6.QtGui import QKeyEvent
+
+    from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
+
+    ov = InPlaceOverlay(QRect(0, 0, 400, 200), _shot(qapp), 1.0)
+    ov.set_blocks([OcrBlock("o", 20, 30, 300, 40, line_h=18)], ["译文"])
+    seen = []
+    ov.closed.connect(lambda: seen.append(1))
+    ov.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Escape, Qt.NoModifier))
+    qapp.processEvents()
+    assert seen, "Esc 必须能关掉覆盖层"
+
+
+def test_overlay_has_visible_close_button(qapp):
+    """光有快捷键不够：屏幕上必须看得见一个出口。"""
+    from PySide6.QtCore import QRect
+
+    from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
+
+    ov = InPlaceOverlay(QRect(0, 0, 400, 200), _shot(qapp), 1.0)
+    btn = ov._close_rect()
+    assert btn.width() >= 18 and btn.height() >= 18
+    assert ov.rect().contains(btn)          # 在窗口内，点得到
+    assert btn.right() >= ov.width() - 40    # 贴着右上角
+    ov.close()
+
+
+def test_overlay_window_matches_region_exactly(qapp):
+    """窗口不能比选区大：多出来的透明边会白白吃掉选区外的点击。"""
+    from PySide6.QtCore import QRect
+
+    from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
+
+    region = QRect(120, 90, 400, 200)
+    ov = InPlaceOverlay(region, _shot(qapp), 1.0)
+    assert ov.geometry().size() == region.size()
+    ov.close()
+
+
+# ---------- 卡片排版 ----------
+
+def test_layout_card_does_not_widen_pointlessly(qapp):
+    """短短一行译文不该把卡片撑到原文之外（差的那点高度是内边距造成的）。"""
+    from PySide6.QtCore import QRect
+
+    from ivyea_translate.ui.inplace_overlay import layout_card
+
+    base = QRect(10, 10, 200, 22)
+    bounds = QRect(0, 0, 800, 400)
+    rect, px = layout_card("好", base, bounds, 14)
+    assert rect.width() == base.width()
+
+
+def test_layout_card_widens_before_shrinking_font(qapp):
+    """译文放不下时先加宽，别一上来就把字压小。"""
+    from PySide6.QtCore import QRect
+
+    from ivyea_translate.ui.inplace_overlay import MIN_FONT_PX, layout_card
+
+    base = QRect(10, 10, 120, 24)
+    bounds = QRect(0, 0, 800, 400)
+    rect, px = layout_card("这是一句比原文长不少的中文译文内容", base, bounds, 14)
+    assert rect.width() > base.width()
+    assert px > MIN_FONT_PX
+
+
+def test_layout_card_stays_inside_bounds(qapp):
+    """再放不下也不能长到窗口外面去。"""
+    from PySide6.QtCore import QRect
+
+    from ivyea_translate.ui.inplace_overlay import layout_card
+
+    bounds = QRect(0, 0, 300, 120)
+    rect, px = layout_card("很长的译文内容" * 20, QRect(10, 10, 200, 30), bounds, 16)
+    assert rect.right() <= bounds.right() and rect.bottom() <= bounds.bottom()
+
+
+def test_progressive_block_fill(qapp):
+    """逐块翻译：翻好一块显示一块，没翻到的先不画。"""
+    from PySide6.QtCore import QRect
+
+    from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
+
+    ov = InPlaceOverlay(QRect(0, 0, 400, 200), _shot(qapp), 1.0)
+    ov.resize(400, 200)
+    ov.prepare([OcrBlock("a", 10, 10, 200, 20, line_h=16),
+                OcrBlock("b", 10, 100, 200, 20, line_h=16)])
+    assert ov._cards == [None, None]
+    ov.set_block_text(1, "第二段译文")
+    assert ov._cards[0] is None and ov._cards[1] is not None
+    ov.set_block_text(0, "第一段译文")
+    assert all(c is not None for c in ov._cards)
+    ov.close()

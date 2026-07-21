@@ -113,6 +113,28 @@ def merge_lines(lines: Sequence[OcrLine]) -> str:
     return "\n\n".join(b.text for b in group_lines(lines))
 
 
+def merge_near_blocks(blocks: Sequence[OcrBlock], gap_factor: float = 1.8) -> List[OcrBlock]:
+    """把纵向挨得近的段落合并成一块（原位翻译用，纯函数）。
+
+    group_lines 的阈值（0.8×行高）是给"拼成一段文字"用的，偏碎；原位模式要把
+    译文贴回屏幕，碎块会变成一堆小卡片，既难看又更容易挤不下。这里用更宽松的
+    间距把视觉上属于同一段的块并起来，横向不重叠的（多栏排版）不合并。
+    """
+    ordered = sorted(blocks, key=lambda b: (b.y, b.x))
+    out: List[OcrBlock] = []
+    for block in ordered:
+        if out:
+            prev = out[-1]
+            gap = block.y - (prev.y + prev.h)
+            ref_h = max(min(prev.line_h or prev.h, block.line_h or block.h), 1.0)
+            overlap = min(prev.x + prev.w, block.x + block.w) - max(prev.x, block.x)
+            if gap <= gap_factor * ref_h and overlap > 0.3 * min(prev.w, block.w):
+                out[-1] = bounding_block([prev, block])
+                continue
+        out.append(block)
+    return out
+
+
 def bounding_block(blocks: Sequence[OcrBlock]) -> OcrBlock:
     """把多个段落并成一个大框（原位翻译对不上段数时的降级目标）。"""
     x0 = min(b.x for b in blocks)

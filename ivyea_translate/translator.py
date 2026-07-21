@@ -5,9 +5,8 @@ TranslateWorker 是 QThread 包装：流式增量经信号发给 UI 线程。
 """
 from __future__ import annotations
 
-import re
 from collections import OrderedDict
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from PySide6.QtCore import QThread, Signal
 
@@ -181,25 +180,6 @@ def parse_email_output(text: str) -> tuple:
     return subject, body
 
 
-def join_blocks(texts: Sequence[str]) -> str:
-    """把多段原文拼成一次请求（段间空行）。原位翻译用。"""
-    return "\n\n".join(t.strip() for t in texts if t and t.strip())
-
-
-def split_translation(text: str, count: int) -> List[str]:
-    """把整段译文按空行切回 count 段（纯函数）。
-
-    对不上就返回空列表，让调用方降级成"整段译文显示成一张卡片"——
-    宁可少一点原位感，也绝不把译文贴错段落。
-    """
-    if count <= 0:
-        return []
-    parts = [p.strip() for p in re.split(r"\n\s*\n", (text or "").strip()) if p.strip()]
-    if count == 1:
-        return ["\n\n".join(parts)] if parts else []
-    return parts if len(parts) == count else []
-
-
 def build_messages(text: str, target_language: str, style: str) -> List[Dict[str, str]]:
     """编译翻译请求的 messages。纯函数。
 
@@ -223,6 +203,57 @@ def build_messages(text: str, target_language: str, style: str) -> List[Dict[str
         {"role": "system", "content": " ".join(rules)},
         {"role": "user", "content": text},
     ]
+
+
+class BlockTranslateWorker(QThread):
+    """原位翻译专用：逐块翻译，每翻完一块就发一次。
+
+    早期版本把所有块拼成一次请求、再按空行切回，只要模型少给一个空行，整屏
+    译文就会集体错位贴到别人的段落上。改成一块一次请求后，"哪段译文属于哪个框"
+    由结构保证，不再依赖模型守规矩。块数通常 1-4，串行发也快，还顺带避免了
+    免费引擎被并发打到限流。
+    """
+
+    block_done = Signal(int, str)   # 块序号, 译文
+    block_failed = Signal(int, str)
+    finished_all = Signal()
+
+    def __init__(self, client: LLMClient, texts: List[str], target_language: str,
+                 style: str, parent=None):
+        super().__init__(parent)
+        self._client = client
+        self._texts = list(texts)
+        self._target_language = target_language
+        self._style = style
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def run(self) -> None:
+        for idx, text in enumerate(self._texts):
+            if self._cancelled:
+                return
+            if not text.strip():
+                continue
+            try:
+                if getattr(self._client, "is_free", False):
+                    result = self._client.translate(text, self._target_language)
+                else:
+                    messages = build_messages(text, self._target_language, self._style)
+                    result = "".join(self._client.stream_chat(messages))
+            except LLMError as e:
+                if not self._cancelled:
+                    self.block_failed.emit(idx, str(e))
+                continue
+            except Exception as e:
+                if not self._cancelled:
+                    self.block_failed.emit(idx, f"{e.__class__.__name__}: {e}")
+                continue
+            if not self._cancelled:
+                self.block_done.emit(idx, result.strip())
+        if not self._cancelled:
+            self.finished_all.emit()
 
 
 class TranslateWorker(QThread):

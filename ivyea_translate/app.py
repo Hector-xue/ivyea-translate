@@ -125,6 +125,7 @@ class TranslateApp(QApplication):
         self._overlay: Optional[CaptureOverlay] = None
         self._capture_mode = "popup"
         self._inplace: Optional[object] = None
+        self._ocr_threads: List[OcrThread] = []
 
         # 退出前必须收干净后台翻译线程：QThread 对象被 Python 回收时若线程还在跑，
         # Qt 会直接 abort（"QThread: Destroyed while thread is still running"）。
@@ -323,6 +324,12 @@ class TranslateApp(QApplication):
         pixmap.save(tmp.name, "PNG")
         return tmp.name
 
+    def _start_ocr(self, path: str, rect: QRect, mode: str) -> None:
+        thread = OcrThread(self.bridge, path, rect, mode)
+        self._ocr_threads = [t for t in self._ocr_threads if t.is_alive()]
+        self._ocr_threads.append(thread)
+        thread.start()
+
     def _on_region_selected(self, rect: QRect, pixmap: QPixmap) -> None:
         if self._capture_mode == "inplace":
             self._clear_overlay()
@@ -338,7 +345,7 @@ class TranslateApp(QApplication):
         popup.show_near(rect)
         self._shot_popup = popup
         popup.destroyed.connect(lambda: setattr(self, "_shot_popup", None))
-        OcrThread(self.bridge, self._save_shot(pixmap), rect, "popup").start()
+        self._start_ocr(self._save_shot(pixmap), rect, "popup")
 
     def _on_ocr_ready(self, text: str, anchor: QRect) -> None:
         popup = getattr(self, "_shot_popup", None)
@@ -360,49 +367,64 @@ class TranslateApp(QApplication):
     def _start_inplace(self, rect: QRect, pixmap: QPixmap) -> None:
         from .ui.inplace_overlay import InPlaceOverlay
 
+        # 同一时刻只留一层：否则连按几次热键会在屏幕上叠一摞置顶窗，
+        # 关掉最上面那层，下面几层还在，看起来就是"关不掉"
+        self._close_inplace()
         # 裁剪图是物理像素、覆盖层用逻辑坐标，两者之比就是这块屏的缩放
         dpr = pixmap.width() / rect.width() if rect.width() else 1.0
         overlay = InPlaceOverlay(rect, pixmap, dpr)
-        overlay.closed.connect(lambda: setattr(self, "_inplace", None))
+        # 只有当前这层关闭才清引用（旧层的迟到信号不能把新层的引用抹掉）
+        overlay.closed.connect(
+            lambda o=overlay: setattr(self, "_inplace", None)
+            if self._inplace is o else None)
         self._inplace = overlay
         overlay.start()
-        OcrThread(self.bridge, self._save_shot(pixmap), rect, "inplace").start()
+        self._start_ocr(self._save_shot(pixmap), rect, "inplace")
 
     def _on_blocks_ready(self, blocks: list, anchor: QRect) -> None:
         from .free_engine import resolve_engine
-        from .ocr import bounding_block
-        from .translator import join_blocks, split_translation
+        from .ocr import merge_near_blocks
+        from .translator import BlockTranslateWorker
 
         overlay = self._inplace
         if overlay is None:  # 用户已按 Esc 关掉，不再打扰
             return
-        overlay.set_status("翻译中…")
-        source = join_blocks([b.text for b in blocks])
+        # OCR 的分段偏碎（行距一超过 0.8 倍行高就断），贴回去会是一堆小卡片；
+        # 原位模式按更宽松的间距合并，视觉上更接近"原文那一段"
+        blocks = merge_near_blocks(blocks, gap_factor=1.8)
+        overlay.prepare(blocks)
+        texts = [b.text for b in blocks]
+        source = "\n\n".join(texts)
         try:
             client = resolve_engine(self.cfg)
         except LLMError as e:
             overlay.fail(str(e), 3000)
             return
         target = self._resolve_target(source, self.cfg.get("screenshot.target_language", ""))
-        worker = TranslateWorker(
-            client, source, target, self.cfg.get("translate.style", "general"),
+        worker = BlockTranslateWorker(
+            client, texts, target, self.cfg.get("translate.style", "general"),
         )
         self._workers.append(worker)
+        results: dict = {}
 
-        def done(full: str) -> None:
+        def block_done(idx: int, text: str) -> None:
             if self._inplace is not overlay:
                 return
-            parts = split_translation(full, len(blocks))
-            if parts:
-                overlay.set_blocks(blocks, parts)
-            else:
-                # 段数对不上：宁可整段贴一张卡，也不把译文贴错段落
-                overlay.set_blocks([bounding_block(blocks)], [full.strip()])
+            results[idx] = text
+            overlay.set_block_text(idx, text)
+
+        def all_done() -> None:
+            if self._inplace is not overlay or not results:
+                return
+            overlay.finish()
+            full = "\n\n".join(results[i] for i in sorted(results))
             self.window.add_history(source, full, target,
                                     self.cfg.get("translate.style", "general"))
 
-        worker.finished_ok.connect(done)
-        worker.failed.connect(lambda msg: overlay.fail(f"翻译失败：{msg}", 3000))
+        worker.block_done.connect(block_done)
+        worker.block_failed.connect(
+            lambda idx, msg: overlay.fail(f"翻译失败：{msg}", 3000))
+        worker.finished_all.connect(all_done)
         worker.finished.connect(
             lambda w=worker: self._workers.remove(w) if w in self._workers else None)
         overlay.closed.connect(worker.cancel)
@@ -411,6 +433,15 @@ class TranslateApp(QApplication):
     def _on_blocks_failed(self, message: str, anchor: QRect) -> None:
         if self._inplace is not None:
             self._inplace.fail(f"识别失败：{message}", 2500)
+
+    def _close_inplace(self) -> None:
+        overlay = self._inplace
+        self._inplace = None
+        if overlay is not None:
+            try:
+                overlay.close()
+            except RuntimeError:
+                pass  # 已被 Qt 销毁
 
     # ---------- 首次引导 ----------
 
@@ -519,6 +550,7 @@ class TranslateApp(QApplication):
     # ---------- 退出 ----------
 
     def _shutdown_workers(self, timeout_ms: int = 1500) -> None:
+        self._shutdown_ocr()
         """取消并等待所有后台翻译线程结束。
 
         cancel() 只置标志位，线程要等当前这一片 SSE 读完才看得到；流式片段来得
@@ -535,6 +567,20 @@ class TranslateApp(QApplication):
                 log.warning("翻译线程未在预算内退出，强制终止")
                 w.terminate()
                 w.wait(200)
+
+    def _shutdown_ocr(self, budget_s: float = 2.0) -> None:
+        """等一下还在识别的 OCR 线程。
+
+        它们是 daemon 线程，解释器退出时会被直接掐断；若正卡在 onnxruntime 的
+        C++ 里，进程会以 abort 收场（Windows 上可能被记成崩溃）。识别通常一两秒
+        就完，给个小预算等一等，超时就不管了——最坏也不比现在差。
+        """
+        deadline = time.monotonic() + budget_s
+        for t in list(self._ocr_threads):
+            if not t.is_alive():
+                continue
+            t.join(max(0.0, deadline - time.monotonic()))
+        self._ocr_threads = [t for t in self._ocr_threads if t.is_alive()]
 
     def request_quit(self) -> None:
         """唯一正确的退出入口：先放行主窗口的 close，再 quit。"""
