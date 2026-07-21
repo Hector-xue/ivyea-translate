@@ -231,10 +231,12 @@ header.nav nav a.gh {
   z-index: -2;
   pointer-events: none;
 }
+/* 托板要把右下角吊出去的弹窗一起兜住（右/下多留一截），否则弹窗孤零零飘在
+   藤叶背景上，看着像"没做进这套装饰里" */
 .shot-wrap::before {
   content: "";
   position: absolute;
-  inset: -26px -30px -34px;
+  inset: -26px -52px -76px -30px;
   border-radius: 28px;
   background: rgba(255, 255, 255, 0.42);
   border: 1px solid rgba(255, 255, 255, 0.72);
@@ -255,12 +257,14 @@ header.nav nav a.gh {
   border-radius: 16px;
   box-shadow: 0 24px 60px rgba(60, 90, 40, 0.18);
 }
-/* 弹窗那张图连自绘投影一起截下来了，不能再叠 CSS 投影（会在透明边上画出方角） */
+/* 弹窗是带透明边的 PNG：投影只能用 drop-shadow（跟着卡片形状走），
+   box-shadow 会沿透明的矩形边框画出方角阴影 */
 .shot.popup {
   position: absolute;
-  width: 44%;
-  right: -5%;
-  bottom: -9%;
+  width: 46%;
+  right: -3%;
+  bottom: -6%;
+  filter: drop-shadow(0 18px 34px rgba(60, 90, 40, 0.26));
 }
 
 /* ---------- 功能 ---------- */
