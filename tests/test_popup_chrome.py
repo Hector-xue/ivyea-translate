@@ -62,6 +62,59 @@ def test_pin_toggle_keeps_brand_color(qapp):
     p.deleteLater()
 
 
+def test_pin_toggle_emits_signal_and_property(qapp):
+    """app 靠 pin_toggled/is_pinned 决定全局"点外即关"监听的起停。"""
+    p = _popup(qapp)
+    seen = []
+    p.pin_toggled.connect(seen.append)
+    assert p.is_pinned is False
+    p._toggle_pin()
+    assert p.is_pinned is True
+    p._toggle_pin()
+    assert seen == [True, False]
+    p.deleteLater()
+
+
+def test_card_border_is_visible(qapp):
+    """bug：旧边框是 rgba(255,255,255,0.9)，浅色背景上等于没有边框。"""
+    from ivyea_translate.ui import theme
+
+    p = _popup(qapp)
+    qss = p._card.styleSheet()
+    assert theme.CARD_BORDER in qss
+    assert "rgba(255, 255, 255, 0.9)" not in qss
+    p.deleteLater()
+
+
+def test_copy_menu_offers_both_texts(qapp):
+    """复制按钮弹两项菜单；原文为空（OCR 未回填）时"复制原文"置灰。"""
+    p = _popup(qapp, original="", show_original=True)
+    p.set_done("译文")
+    menu = p._build_copy_menu()
+    labels = [a.text() for a in menu.actions()]
+    assert labels == ["复制译文", "复制原文"]
+    assert not menu.actions()[1].isEnabled()
+
+    p.set_original("source text")
+    menu2 = p._build_copy_menu()
+    assert menu2.actions()[1].isEnabled()
+    p.deleteLater()
+
+
+def test_copy_menu_actions_write_clipboard(qapp):
+    from PySide6.QtGui import QGuiApplication
+
+    p = _popup(qapp, original="src", show_original=True)
+    p.set_done("res")
+    menu = p._build_copy_menu()
+    menu.actions()[0].trigger()
+    assert QGuiApplication.clipboard().text() == "res"
+    menu.actions()[1].trigger()
+    assert QGuiApplication.clipboard().text() == "src"
+    assert p.copy_btn.text() == "已复制"   # 按钮给出反馈，1.2s 后自动复原
+    p.deleteLater()
+
+
 def test_titlebar_row_is_drag_not_resize(qapp):
     """标题行是拖动把手：光标必须是箭头，不能是上下缩放箭头。"""
     from PySide6.QtCore import Qt

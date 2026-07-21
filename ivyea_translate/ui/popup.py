@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QTextEdit,
@@ -91,6 +92,7 @@ class TranslationPopup(QWidget):
     """一次翻译一个弹窗实例；关闭即销毁。支持钉住（失焦不关）。"""
 
     explain_requested = Signal()  # 首次点击"详解"时发出，由 app 接管生成
+    pin_toggled = Signal(bool)    # 钉住状态变化；app 据此起停全局"点外即关"监听
 
     def __init__(self, original: str = "", show_original: bool = False,
                  width: int = 520, show_explain: bool = False):
@@ -130,7 +132,7 @@ class TranslationPopup(QWidget):
             f"""
             QWidget#PopupCard {{
                 background: {theme.POPUP_BG};
-                border: 1px solid rgba(255, 255, 255, 0.9);
+                border: 1px solid {theme.CARD_BORDER};
                 border-radius: 16px;
             }}
             QTextEdit {{
@@ -194,7 +196,7 @@ class TranslationPopup(QWidget):
         self._sync_pin_style()
         self.copy_btn = QPushButton("复制")
         self.copy_btn.setObjectName("Ghost")
-        self.copy_btn.clicked.connect(self._copy_result)
+        self.copy_btn.clicked.connect(self._show_copy_menu)
         close_btn = QPushButton("✕")
         close_btn.setObjectName("Ghost")
         close_btn.setFixedSize(26, 26)
@@ -521,9 +523,14 @@ class TranslationPopup(QWidget):
 
     # ---- 交互 ----
 
+    @property
+    def is_pinned(self) -> bool:
+        return self._pinned
+
     def _toggle_pin(self) -> None:
         self._pinned = not self._pinned
         self._sync_pin_style()
+        self.pin_toggled.emit(self._pinned)
 
     def _sync_pin_style(self) -> None:
         """图钉一律走品牌绿：未钉住淡一档，钉住时实心 + 品牌绿底衬。"""
@@ -546,19 +553,35 @@ class TranslationPopup(QWidget):
             self._orig_toggle.setText("原文 ▸" if visible else "原文 ▾")
         self._relayout()
 
-    def _copy_result(self) -> None:
-        text = self.result_view.toPlainText()
-        if text:
-            app = QApplication.instance()
-            if app and hasattr(app, "mark_own_copy"):
-                app.mark_own_copy(text)
-            QGuiApplication.clipboard().setText(text)
-            self.copy_btn.setText("已复制")
-            QTimer.singleShot(1200, lambda: self.copy_btn.setText("复制"))
+    def _copy_text(self, text: str) -> None:
+        if not text:
+            return
+        app = QApplication.instance()
+        if app and hasattr(app, "mark_own_copy"):
+            app.mark_own_copy(text)  # 防止自家写入触发 Ctrl+C+C 划词翻译
+        QGuiApplication.clipboard().setText(text)
+        self.copy_btn.setText("已复制")
+        QTimer.singleShot(1200, self.copy_btn, lambda: self.copy_btn.setText("复制"))
+
+    def _build_copy_menu(self) -> QMenu:
+        """构建与弹出拆开：offscreen 测试只验构建，不 exec。"""
+        menu = QMenu(self)
+        menu.addAction("复制译文", lambda: self._copy_text(self.result_view.toPlainText()))
+        act = menu.addAction("复制原文", lambda: self._copy_text(self.original_text))
+        act.setEnabled(bool((self.original_text or "").strip()))
+        return menu
+
+    def _show_copy_menu(self) -> None:
+        menu = self._build_copy_menu()
+        menu.exec(self.copy_btn.mapToGlobal(QPoint(0, self.copy_btn.height() + 4)))
 
     def mousePressEvent(self, event):
         if event.button() != Qt.LeftButton:
             return
+        # 弹窗平时不抢焦点（WA_ShowWithoutActivating）；用户主动点它，才把键盘
+        # 焦点接过来——Esc 从这一刻起真正可用
+        self.activateWindow()
+        self.setFocus(Qt.MouseFocusReason)
         edge = self._edge_at(event.position().toPoint())
         if edge:
             # 从边缘按下 -> 缩放

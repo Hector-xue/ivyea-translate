@@ -83,33 +83,36 @@ def _shot(qapp, w=400, h=200):
 
 def test_overlay_cards_land_on_block_positions(qapp):
     from PySide6.QtCore import QRect
+    from PySide6.QtGui import QColor
 
     from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
 
     ov = InPlaceOverlay(QRect(100, 80, 400, 200), _shot(qapp), 1.0)
-    ov.resize(400, 200)
     blocks = [OcrBlock("orig", 20, 30, 300, 40, line_h=18, lines=2)]
     ov.set_blocks(blocks, ["译文一段"])
     assert len(ov._cards) == 1
-    rect, text, px = ov._cards[0]
+    rect, text, px, bg, fg = ov._cards[0]
     assert text == "译文一段"
     assert rect.contains(20 + 5, 30 + 5)   # 卡片盖住原文位置
     assert px >= 11
+    assert isinstance(bg, QColor) and isinstance(fg, QColor)
     ov.close()
 
 
-def test_overlay_hover_hides_that_card(qapp):
-    """悬停某块 -> 该块不绘制，露出屏幕上的真实原文。"""
-    from PySide6.QtCore import QPoint, QRect
+def test_overlay_toggle_shows_original(qapp):
+    """工具条"原文"开关：整体切回屏幕原文（不画卡片），再点切回译文。"""
+    from PySide6.QtCore import QRect
 
     from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
 
     ov = InPlaceOverlay(QRect(0, 0, 400, 200), _shot(qapp), 1.0)
-    ov.resize(400, 200)
     ov.set_blocks([OcrBlock("o", 20, 30, 300, 40, line_h=18)], ["译文"])
-    inside = ov._cards[0][0].center()
-    assert ov._card_at(inside) == 0
-    assert ov._card_at(QPoint(5, 195)) == -1
+    assert not ov._show_original
+    ov._toolbar.btn_orig.click()
+    assert ov._show_original
+    assert not ov.grab().isNull()   # 切换后 paintEvent 不崩
+    ov._toolbar.btn_orig.click()
+    assert not ov._show_original
     ov.close()
 
 
@@ -162,28 +165,104 @@ def test_escape_closes_overlay(qapp):
 
 
 def test_overlay_has_visible_close_button(qapp):
-    """光有快捷键不够：屏幕上必须看得见一个出口。"""
+    """光有快捷键不够：屏幕上必须看得见一个出口（工具条上的 ✕）。"""
     from PySide6.QtCore import QRect
 
     from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
 
     ov = InPlaceOverlay(QRect(0, 0, 400, 200), _shot(qapp), 1.0)
-    btn = ov._close_rect()
-    assert btn.width() >= 18 and btn.height() >= 18
-    assert ov.rect().contains(btn)          # 在窗口内，点得到
-    assert btn.right() >= ov.width() - 40    # 贴着右上角
+    btn = ov._toolbar.btn_close
+    assert btn.isEnabled()
+    seen = []
+    ov.closed.connect(lambda: seen.append(1))
+    btn.click()
+    qapp.processEvents()
+    assert seen, "工具条 ✕ 必须能关掉覆盖层"
+
+
+def test_overlay_window_wraps_region_plus_toolbar(qapp):
+    """窗口 = 选区 + 一条工具条；选区本身的位置和大小必须原样保留。"""
+    from PySide6.QtCore import QRect
+
+    from ivyea_translate.ui.inplace_overlay import InPlaceOverlay, TOOLBAR_GAP
+
+    region = QRect(120, 90, 400, 200)
+    ov = InPlaceOverlay(region, _shot(qapp), 1.0)
+    sel = ov._selection_rect()
+    assert sel.size() == region.size()
+    # 选区映回全局坐标要和原选区重合
+    assert ov.geometry().x() + sel.x() == region.x()
+    assert ov.geometry().y() + sel.y() == region.y()
+    ext = ov._toolbar.height() + TOOLBAR_GAP
+    assert ov.geometry().height() == region.height() + ext
     ov.close()
 
 
-def test_overlay_window_matches_region_exactly(qapp):
-    """窗口不能比选区大：多出来的透明边会白白吃掉选区外的点击。"""
+def test_overlay_widens_window_for_narrow_region(qapp):
+    """选区比工具条窄时窗口向右拓宽，按钮不能被裁掉。"""
     from PySide6.QtCore import QRect
 
     from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
 
-    region = QRect(120, 90, 400, 200)
+    ov = InPlaceOverlay(QRect(50, 50, 80, 60), _shot(qapp, 80, 60), 1.0)
+    assert ov.width() >= ov._toolbar.width()
+    assert ov.rect().contains(ov._toolbar.geometry())
+    ov.close()
+
+
+def test_overlay_closes_on_window_deactivate(qapp):
+    """切到别的窗口，覆盖层必须自己收走（bug：翻译一直赖在屏幕上）。"""
+    from PySide6.QtCore import QEvent, QRect
+
+    from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
+
+    ov = InPlaceOverlay(QRect(0, 0, 400, 200), _shot(qapp), 1.0)
+    ov.show()
+    seen = []
+    ov.closed.connect(lambda: seen.append(1))
+    ov.event(QEvent(QEvent.WindowDeactivate))
+    qapp.processEvents()
+    assert seen
+
+
+def test_overlay_copy_buttons(qapp):
+    """复制译文/复制原文走剪贴板；翻译完成前复制译文不可用。"""
+    from PySide6.QtCore import QRect
+    from PySide6.QtGui import QGuiApplication
+
+    from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
+
+    ov = InPlaceOverlay(QRect(0, 0, 400, 200), _shot(qapp), 1.0)
+    assert not ov._toolbar.btn_copy_res.isEnabled()
+    assert not ov._toolbar.btn_copy_src.isEnabled()
+    ov.prepare([OcrBlock("hello", 20, 30, 300, 40, line_h=18),
+                OcrBlock("world", 20, 120, 300, 40, line_h=18)])
+    assert ov._toolbar.btn_copy_src.isEnabled()   # OCR 一到就能复制原文
+    assert not ov._toolbar.btn_copy_res.isEnabled()
+    ov.set_block_text(0, "你好")
+    ov.set_block_text(1, "世界")
+    ov.finish()
+    assert ov._toolbar.btn_copy_res.isEnabled()
+    ov._toolbar.btn_copy_res.click()
+    assert QGuiApplication.clipboard().text() == "你好\n\n世界"
+    ov._toolbar.btn_copy_src.click()
+    assert QGuiApplication.clipboard().text() == "hello\n\nworld"
+    ov.close()
+
+
+def test_overlay_to_popup_carries_texts(qapp):
+    """工具条"弹窗"：带着原文/译文和选区转对照弹窗。"""
+    from PySide6.QtCore import QRect
+
+    from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
+
+    region = QRect(30, 40, 400, 200)
     ov = InPlaceOverlay(region, _shot(qapp), 1.0)
-    assert ov.geometry().size() == region.size()
+    ov.set_blocks([OcrBlock("source", 20, 30, 300, 40, line_h=18)], ["译文"])
+    got = []
+    ov.popup_requested.connect(lambda s, r, rc: got.append((s, r, rc)))
+    ov._toolbar.btn_popup.click()
+    assert got == [("source", "译文", region)]
     ov.close()
 
 
@@ -232,7 +311,6 @@ def test_progressive_block_fill(qapp):
     from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
 
     ov = InPlaceOverlay(QRect(0, 0, 400, 200), _shot(qapp), 1.0)
-    ov.resize(400, 200)
     ov.prepare([OcrBlock("a", 10, 10, 200, 20, line_h=16),
                 OcrBlock("b", 10, 100, 200, 20, line_h=16)])
     assert ov._cards == [None, None]
@@ -240,4 +318,72 @@ def test_progressive_block_fill(qapp):
     assert ov._cards[0] is None and ov._cards[1] is not None
     ov.set_block_text(0, "第一段译文")
     assert all(c is not None for c in ov._cards)
+    ov.close()
+
+
+# ---------- 贴回原图：取样底色 + 自动黑白文字 ----------
+
+def _image_with_center_text(qapp, edge="#3A6EA5", w=200, h=60):
+    """纯色底 + 中心一坨"文字"色块：验证取样只采边缘环带。"""
+    from PySide6.QtCore import QRect as _QRect
+    from PySide6.QtGui import QColor, QImage, QPainter
+
+    img = QImage(w, h, QImage.Format_RGB32)
+    img.fill(QColor(edge))
+    p = QPainter(img)
+    p.fillRect(_QRect(20, 15, w - 40, h - 30), QColor("#000000"))
+    p.end()
+    return img
+
+
+def test_sample_bg_color_reads_edge_not_center(qapp):
+    from PySide6.QtCore import QRect
+
+    from ivyea_translate.ui.inplace_overlay import sample_bg_color
+
+    img = _image_with_center_text(qapp)
+    c = sample_bg_color(img, QRect(0, 0, 200, 60))
+    # 中心大片黑"文字"不应把底色拉黑：结果要贴近边缘的蓝
+    assert abs(c.red() - 0x3A) < 30
+    assert abs(c.blue() - 0xA5) < 40
+
+
+def test_sample_bg_color_clamps_out_of_bounds(qapp):
+    from PySide6.QtCore import QRect
+    from PySide6.QtGui import QColor, QImage
+
+    from ivyea_translate.ui.inplace_overlay import sample_bg_color
+
+    img = QImage(50, 50, QImage.Format_RGB32)
+    img.fill(QColor("#FF0000"))
+    assert sample_bg_color(img, QRect(-20, -20, 60, 60)).red() == 255
+    # 完全在图外：退回白色而不是崩
+    c = sample_bg_color(img, QRect(500, 500, 40, 40))
+    assert (c.red(), c.green(), c.blue()) == (255, 255, 255)
+
+
+@pytest.mark.parametrize("bg_hex, expect_dark_ink", [
+    ("#FFFFFF", True),   # 白底 -> 黑字
+    ("#F2F6EC", True),
+    ("#1E1E1E", False),  # 深底 -> 白字
+    ("#3A6EA5", False),
+])
+def test_ink_for_picks_contrast_color(qapp, bg_hex, expect_dark_ink):
+    from PySide6.QtGui import QColor
+
+    from ivyea_translate.ui.inplace_overlay import INK_DARK, INK_LIGHT, ink_for
+
+    ink = ink_for(QColor(bg_hex))
+    assert ink.name().upper() == (INK_DARK if expect_dark_ink else INK_LIGHT).upper()
+
+
+def test_overlay_paints_without_crash_after_fill(qapp):
+    """离屏跑一遍完整 paintEvent（卡片+外框+角标+状态），别等 Windows 上才炸。"""
+    from PySide6.QtCore import QRect
+
+    from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
+
+    ov = InPlaceOverlay(QRect(0, 0, 400, 200), _shot(qapp), 1.0)
+    ov.set_blocks([OcrBlock("o", 20, 30, 300, 40, line_h=18)], ["译文"])
+    assert not ov.grab().isNull()
     ov.close()

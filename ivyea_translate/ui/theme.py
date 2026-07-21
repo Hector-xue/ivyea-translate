@@ -367,6 +367,32 @@ QWidget#HistRow:hover {{
 QLabel#HistMeta {{ color: {TEXT_MUTED}; font-size: 11px; }}
 QLabel#HistSrc {{ color: {TEXT_SECONDARY}; font-size: 13px; }}
 QLabel#HistRes {{ color: {TEXT_PRIMARY}; font-size: 14px; font-weight: 500; }}
+/* ---- 菜单（托盘菜单 / 弹窗复制菜单共用） ---- */
+QMenu {{
+    background: #FFFFFF;
+    border: 1px solid {CARD_BORDER};
+    border-radius: 8px;
+    padding: 5px;
+}}
+QMenu::item {{
+    padding: 6px 14px;
+    border-radius: 7px;
+    color: {TEXT_PRIMARY};
+    font-size: 13px;
+    background: transparent;
+}}
+QMenu::item:selected {{
+    background: {ACCENT_SOFT};
+    color: {ACCENT_HOVER};
+}}
+QMenu::item:disabled {{
+    color: {TEXT_MUTED};
+}}
+QMenu::separator {{
+    height: 1px;
+    background: {CARD_BORDER};
+    margin: 4px 8px;
+}}
 QToolTip {{
     background: white;
     color: {TEXT_PRIMARY};

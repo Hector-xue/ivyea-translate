@@ -10,7 +10,7 @@ from typing import List, Optional
 log = logging.getLogger(__name__)
 
 from PySide6.QtCore import QLockFile, QObject, QRect, Qt, Signal
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QAction, QColor, QCursor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from .clipboard_watch import ClipboardWatcher
@@ -21,6 +21,7 @@ from .ocr import ocr_engine
 from .translator import TranslateWorker
 from .ui import theme
 from .ui.capture_overlay import CaptureOverlay
+from .ui.dismiss_watch import GlobalDismissWatcher
 from .ui.main_window import MainWindow
 from .ui.popup import TranslationPopup
 
@@ -110,6 +111,12 @@ class TranslateApp(QApplication):
         self.watcher.double_copy_enabled = bool(self.cfg.get("double_copy.enabled", True))
         self.watcher.double_window_s = float(self.cfg.get("double_copy.window_ms", 700)) / 1000
         self.watcher.double_copied.connect(self._popup_translate_at_cursor)
+
+        # 弹窗"点外部/滚动即关"：全局鼠标监听，只在有未钉住弹窗时运行
+        self.dismiss = GlobalDismissWatcher(self)
+        self.dismiss.mouse_pressed.connect(self._on_global_press)
+        self.dismiss.mouse_scrolled.connect(self._on_global_press)
+        self.aboutToQuit.connect(self.dismiss.stop)
 
         self.window = MainWindow(self.cfg)
         self.window.settings_saved.connect(self._on_settings_saved)
@@ -256,7 +263,32 @@ class TranslateApp(QApplication):
     def _track_popup(self, popup: TranslationPopup) -> None:
         self._popups.append(popup)
         popup.explain_requested.connect(lambda p=popup: self._on_explain_requested(p))
-        popup.destroyed.connect(lambda: self._popups.remove(popup) if popup in self._popups else None)
+        popup.pin_toggled.connect(self._sync_dismiss_watch)
+
+        def _gone() -> None:
+            if popup in self._popups:
+                self._popups.remove(popup)
+            self._sync_dismiss_watch()
+
+        popup.destroyed.connect(_gone)
+        self._sync_dismiss_watch()
+
+    def _sync_dismiss_watch(self, *_args) -> None:
+        if any(not p.is_pinned for p in self._popups):
+            self.dismiss.start()
+        else:
+            self.dismiss.stop()
+
+    def _on_global_press(self) -> None:
+        """全局按下/滚轮：关掉所有"点击点不在其内"的未钉住弹窗。"""
+        if QApplication.activePopupWidget() is not None:
+            return  # 自家复制菜单展开中，别把这次点击当"点外部"
+        # 不用监听回调给的坐标（Windows 上是物理像素），读 QCursor.pos() 与
+        # frameGeometry() 同一逻辑坐标系；frameGeometry 含阴影留边，自带容差
+        pos = QCursor.pos()
+        for p in list(self._popups):
+            if not p.is_pinned and p.isVisible() and not p.frameGeometry().contains(pos):
+                p.close()
 
     def _on_explain_requested(self, popup: TranslationPopup) -> None:
         """弹窗点"详解"：讲解外语侧（用母语书写），流式回填。仅大模型可用。"""
@@ -377,6 +409,7 @@ class TranslateApp(QApplication):
         overlay.closed.connect(
             lambda o=overlay: setattr(self, "_inplace", None)
             if self._inplace is o else None)
+        overlay.popup_requested.connect(self._on_inplace_popup)
         self._inplace = overlay
         overlay.start()
         self._start_ocr(self._save_shot(pixmap), rect, "inplace")
@@ -430,6 +463,16 @@ class TranslateApp(QApplication):
         overlay.closed.connect(worker.cancel)
         worker.start()
 
+    def _on_inplace_popup(self, source: str, result: str, rect: QRect) -> None:
+        """原位工具条点"弹窗"：已完成的原文/译文转成对照弹窗（不重新翻译）。"""
+        popup = TranslationPopup(original=source, show_original=True,
+                                 width=int(self.cfg.get("ui.popup_width", 520)),
+                                 show_explain=self._explain_available())
+        self._track_popup(popup)
+        popup.set_done(result)
+        popup.show_near(rect)
+        self._close_inplace()
+
     def _on_blocks_failed(self, message: str, anchor: QRect) -> None:
         if self._inplace is not None:
             self._inplace.fail(f"识别失败：{message}", 2500)
@@ -463,7 +506,7 @@ class TranslateApp(QApplication):
             f"2. 按 {pretty_hotkey(self.cfg.get('hotkeys.screenshot_translate', ''))} "
             "框选屏幕 —— 截图翻译（弹窗显示译文）\n"
             f"3. 按 {pretty_hotkey(self.cfg.get('hotkeys.screenshot_inplace', ''))} "
-            "框选屏幕 —— 原位翻译（译文直接盖在原文上，悬停可看回原文，Esc 关闭）\n"
+            "框选屏幕 —— 原位翻译（译文直接盖在原文上，工具条可复制/看原文，Esc 关闭）\n"
             "4. 免配置即用（内置免费翻译）；到「设置」填自己的大模型可解锁风格与邮件助手\n\n"
             "程序常驻托盘，点托盘图标可随时打开本窗口。"
         )
