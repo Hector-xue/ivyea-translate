@@ -214,19 +214,21 @@ header.nav nav a.gh {
 /* ---------- 截图展示 ---------- */
 .showcase { padding: 40px 20px 90px; display: flex; justify-content: center; }
 .shot-wrap { position: relative; max-width: 860px; width: 100%; }
-.shot {
-  border-radius: var(--radius);
-  border: 1px solid var(--card-line);
+/* 截图是 2x 的 PNG，自带窗口圆角（透明角）：这里的圆角要跟图里的对齐，
+   描边则去掉——图里已经有窗体描边，再叠一圈会出现双边 */
+.shot { max-width: 100%; }
+.shot.main {
+  width: 100%;
+  display: block;
+  border-radius: 16px;
   box-shadow: 0 24px 60px rgba(60, 90, 40, 0.18);
-  max-width: 100%;
 }
-.shot.main { width: 100%; display: block; }
+/* 弹窗那张图连自绘投影一起截下来了，不能再叠 CSS 投影（会在透明边上画出方角） */
 .shot.popup {
   position: absolute;
-  width: 46%;
-  right: -4%;
-  bottom: -9%;
-  box-shadow: 0 18px 44px rgba(60, 90, 40, 0.28);
+  width: 52%;
+  right: -6%;
+  bottom: -11%;
 }
 
 /* ---------- 功能 ---------- */
