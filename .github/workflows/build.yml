@@ -37,8 +37,6 @@ jobs:
           python-version: "3.12"
       - name: Install deps
         run: pip install -r requirements.txt pyinstaller
-      - name: Build portable exe
-        run: pyinstaller --noconfirm ivyea-translate-portable.spec
       - name: Build folder app (for installer)
         run: pyinstaller --noconfirm ivyea-translate.spec
       - name: Build installer (Inno Setup)
@@ -49,22 +47,12 @@ jobs:
       - name: Smoke check artifacts
         shell: pwsh
         run: |
-          foreach ($f in @("dist/IvyeaTranslate.exe", "dist/IvyeaTranslate-Setup.exe")) {
+          foreach ($f in @("dist/IvyeaTranslate-Setup.exe")) {
             if (!(Test-Path $f)) { throw "$f not produced" }
             $len = (Get-Item $f).Length
             Write-Host "$f size: $([math]::Round($len/1MB)) MB"
             if ($len -lt 80MB) { throw "$f suspiciously small ($len bytes) - dependencies likely missing" }
           }
-      - name: Smoke run portable exe (offscreen, must stay alive 30s)
-        shell: pwsh
-        run: |
-          $env:QT_QPA_PLATFORM = "offscreen"
-          $env:IVYEA_TRANSLATE_HOME = "$env:RUNNER_TEMP\ivyea-smoke"
-          $p = Start-Process -FilePath dist\IvyeaTranslate.exe -PassThru
-          Start-Sleep -Seconds 30
-          if ($p.HasExited) { throw "exe exited early, code=$($p.ExitCode)" }
-          Stop-Process -Id $p.Id -Force
-          Write-Host "exe stayed alive 30s - smoke OK"
       - name: Smoke install + run installed app
         shell: pwsh
         run: |
@@ -72,7 +60,7 @@ jobs:
           $installdir = "$env:LOCALAPPDATA\Programs\IvyeaTranslate"
           $exe = "$installdir\IvyeaTranslate.exe"
           if (!(Test-Path $exe)) { throw "installed exe not found at $exe" }
-          # is_installed_copy() 依赖安装目录里的卸载器来判定"安装版"，缺了就会误判为便携版
+          # is_installed_copy() 依赖安装目录里的卸载器来判定"安装版"，缺了就会误判为非安装版
           if (!(Test-Path "$installdir\unins000.exe")) { throw "uninstaller missing -> update self-detect would fail" }
           $env:QT_QPA_PLATFORM = "offscreen"
           $env:IVYEA_TRANSLATE_HOME = "$env:RUNNER_TEMP\ivyea-smoke2"
@@ -84,16 +72,12 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: IvyeaTranslate-win64
-          path: |
-            dist/IvyeaTranslate.exe
-            dist/IvyeaTranslate-Setup.exe
+          path: dist/IvyeaTranslate-Setup.exe
       - name: Attach to release on tag
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dist/IvyeaTranslate.exe
-            dist/IvyeaTranslate-Setup.exe
+          files: dist/IvyeaTranslate-Setup.exe
 
   # macOS 版目前是未签名 Beta：CI 只能保证"能构建、能启动"，
   # 热键/取词/截图/权限弹窗必须在真机人工验证（见 README 的 macOS 清单）

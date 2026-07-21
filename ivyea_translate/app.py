@@ -371,7 +371,7 @@ class TranslateApp(QApplication):
             self._start_update(feed)
 
     def _start_update(self, feed: dict) -> None:
-        """一键更新：下载(进度条)→静默安装→自动重启。便携版引导到官网。"""
+        """一键更新：下载(进度条)→静默安装→自动重启。非安装版引导到官网。"""
         from PySide6.QtGui import QDesktopServices
         from PySide6.QtCore import QUrl
         from PySide6.QtWidgets import QMessageBox, QProgressDialog
@@ -380,7 +380,7 @@ class TranslateApp(QApplication):
         if not is_installed_copy():
             QMessageBox.information(
                 self.window, "更新",
-                "便携版无法自替换，请到官网下载新版覆盖使用。")
+                "当前安装方式无法自替换，请到官网下载新版覆盖使用。")
             QDesktopServices.openUrl(QUrl(feed.get("page_url", "https://translate.ivyea.com/")))
             return
 

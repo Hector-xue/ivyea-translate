@@ -46,7 +46,6 @@
 官网直接下载：**https://translate.ivyea.com**（或到 [Releases](../../releases)）：
 
 - **IvyeaTranslate-Setup.exe** —— 安装版：向导安装、开始菜单+桌面快捷方式、可卸载（装到当前用户目录，无需管理员）
-- **IvyeaTranslate.exe** —— 单文件便携版：免安装双击即用，首次启动解压慢几秒
 - **IvyeaTranslate-mac-arm64.dmg** —— macOS（Apple Silicon）**Beta**：拖进「应用程序」即可，未签名，见下方 macOS 说明
 
 注意：
@@ -79,7 +78,7 @@
 
 安装版应用启动后会静默检查更新（源：`https://translate.ivyea.com/download/version.json`），
 发现新版会弹窗提示，点「立即更新」即自动下载（带进度）→ 静默安装 → 自动重启，全程无需去官网；设置页「关于与更新」也留了入口。
-便携版会引导到官网下载新版。可在配置里关闭 `update.auto_check`。
+非安装版（macOS / 源码运行）会引导到官网下载新版。可在配置里关闭 `update.auto_check`。
 
 发版流程（维护者）：推 `v*` tag → GitHub Actions 云端构建并挂 Release →
 服务器 cron（每 20 分钟，`deploy/sync-release.sh`）自动把 exe 同步到官网下载目录并刷新 version.json。
@@ -103,11 +102,10 @@ python -m ivyea_translate
 
 ```bat
 build.bat            :: 文件夹版（启动快）  -> dist\IvyeaTranslate\IvyeaTranslate.exe
-build.bat portable   :: 单文件便携版        -> dist\IvyeaTranslate.exe
 ```
 
 安装包：装 [Inno Setup 6](https://jrsoftware.org/isinfo.php) 后在文件夹版基础上 `iscc installer.iss` → `dist\IvyeaTranslate-Setup.exe`。
-CI 会在推 `v*` tag 时自动构建全部三种 Windows 产物并挂到 Release。
+CI 会在推 `v*` tag 时自动构建 Windows 安装包并挂到 Release。
 
 macOS（在 Mac 上）：`pyinstaller ivyea-translate-mac.spec` → `dist/IvyeaTranslate.app`；
 CI 的 `build-macos` job 会再用 `hdiutil` 打成 dmg 并挂到 Release。

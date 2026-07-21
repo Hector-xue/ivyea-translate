@@ -6,7 +6,7 @@ GitHub Release 自动同步生成）。
 流程（与主流桌面软件一致）：
   启动静默检查 / 设置页手动检查 -> 发现新版 -> 下载安装包(带进度)
   -> 写一个等待脚本(等本进程退出 -> 静默安装 -> 重启应用) -> 应用自己退出。
-便携版/源码运行无法覆盖安装，退化为打开官网下载页。
+非安装版（macOS / 源码运行）无法覆盖安装，退化为打开官网下载页。
 """
 from __future__ import annotations
 
@@ -66,7 +66,6 @@ def normalize_feed(data: object) -> Optional[Dict]:
     return {
         "version": version.lstrip("vV"),
         "setup_url": setup_url,
-        "portable_url": data.get("portable_url", ""),
         "notes": data.get("notes", "") if isinstance(data.get("notes"), str) else "",
         "page_url": data.get("page_url", "https://translate.ivyea.com/"),
     }
@@ -75,7 +74,7 @@ def normalize_feed(data: object) -> Optional[Dict]:
 def _looks_installed(exe_path: Path, localappdata: str) -> bool:
     """纯逻辑（可单测）：判断 exe 是否属于 Inno 安装版。
 
-    主判据：安装目录里有卸载器 unins*.exe（Inno 安装版必有，便携单文件版没有），
+    主判据：安装目录里有卸载器 unins*.exe（Inno 安装版必有），
     与安装位置无关，避免 LOCALAPPDATA 路径匹配 + resolve() 长路径前缀带来的误判。
     兜底：exe 位于 LOCALAPPDATA 下。
     """
