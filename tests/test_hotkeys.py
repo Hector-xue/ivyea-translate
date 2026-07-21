@@ -36,3 +36,18 @@ def test_named_keys():
 def test_invalid_combos_raise(bad):
     with pytest.raises(ValueError):
         parse_hotkey(bad)
+
+
+def test_inplace_hotkey_is_registrable(qapp):
+    """原位截图翻译要有自己的信号和默认组合，否则热键管理器会静默丢掉它。"""
+    from ivyea_translate.config import DEFAULT_CONFIG
+    from ivyea_translate.hotkeys import HotkeyManager
+
+    mgr = HotkeyManager()
+    names = mgr._signal_map()
+    assert "screenshot_inplace" in names and "screenshot_translate" in names
+
+    combos = DEFAULT_CONFIG["hotkeys"]
+    assert combos["screenshot_inplace"] != combos["screenshot_translate"]
+    for combo in combos.values():
+        parse_hotkey(combo)  # 默认值必须解析得动

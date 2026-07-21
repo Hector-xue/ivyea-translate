@@ -36,6 +36,19 @@ class OcrLine:
     h: float
 
 
+@dataclass
+class OcrBlock:
+    """一个段落：合并后的文本 + 该段所有行的并集包围框（原图物理像素）。"""
+
+    text: str
+    x: float
+    y: float
+    w: float
+    h: float
+    line_h: float = 0.0   # 平均行高，原位模式据此定初始字号
+    lines: int = 1
+
+
 _CJK_RE = re.compile(r"[一-鿿぀-ヿ가-힯]")
 
 
@@ -48,32 +61,106 @@ def _joiner(prev: str, curr: str) -> str:
     return " "
 
 
-def merge_lines(lines: Sequence[OcrLine]) -> str:
-    """按 y 排序，行距 > 0.8×行高视为新段落；段内智能拼接。"""
+def _join_para(texts: Sequence[str]) -> str:
+    buf = texts[0]
+    for piece in texts[1:]:
+        join = _joiner(buf, piece)
+        if join == "" and buf.endswith("-"):
+            buf = buf[:-1]
+        buf += join + piece
+    return buf
+
+
+def group_lines(lines: Sequence[OcrLine]) -> List[OcrBlock]:
+    """按 y 排序，行距 > 0.8×行高视为新段落；返回段落文本 + 该段的并集包围框。
+
+    纯函数。原位翻译要把译文贴回每段原来的位置，所以段落必须带框；
+    merge_lines 就是本函数的"只要文本"视图。
+    """
     valid = [ln for ln in lines if ln.text.strip()]
     if not valid:
-        return ""
+        return []
     ordered = sorted(valid, key=lambda ln: (ln.y, ln.x))
-    paragraphs: List[List[str]] = [[ordered[0].text.strip()]]
+    groups: List[List[OcrLine]] = [[ordered[0]]]
     prev = ordered[0]
     for ln in ordered[1:]:
         gap = ln.y - (prev.y + prev.h)
         ref_h = max(min(prev.h, ln.h), 1.0)
         if gap > 0.8 * ref_h:
-            paragraphs.append([ln.text.strip()])
+            groups.append([ln])
         else:
-            paragraphs[-1].append(ln.text.strip())
+            groups[-1].append(ln)
         prev = ln
-    out_paras: List[str] = []
-    for para in paragraphs:
-        buf = para[0]
-        for piece in para[1:]:
-            join = _joiner(buf, piece)
-            if join == "" and buf.endswith("-"):
-                buf = buf[:-1]
-            buf += join + piece
-        out_paras.append(buf)
-    return "\n\n".join(out_paras)
+    blocks: List[OcrBlock] = []
+    for group in groups:
+        x0 = min(ln.x for ln in group)
+        y0 = min(ln.y for ln in group)
+        x1 = max(ln.x + ln.w for ln in group)
+        y1 = max(ln.y + ln.h for ln in group)
+        blocks.append(
+            OcrBlock(
+                text=_join_para([ln.text.strip() for ln in group]),
+                x=x0, y=y0, w=x1 - x0, h=y1 - y0,
+                line_h=sum(ln.h for ln in group) / len(group),
+                lines=len(group),
+            )
+        )
+    return blocks
+
+
+def merge_lines(lines: Sequence[OcrLine]) -> str:
+    """段落文本，段间空行分隔（原位模式之外的老链路仍用它）。"""
+    return "\n\n".join(b.text for b in group_lines(lines))
+
+
+def bounding_block(blocks: Sequence[OcrBlock]) -> OcrBlock:
+    """把多个段落并成一个大框（原位翻译对不上段数时的降级目标）。"""
+    x0 = min(b.x for b in blocks)
+    y0 = min(b.y for b in blocks)
+    x1 = max(b.x + b.w for b in blocks)
+    y1 = max(b.y + b.h for b in blocks)
+    return OcrBlock(
+        text="\n\n".join(b.text for b in blocks),
+        x=x0, y=y0, w=x1 - x0, h=y1 - y0,
+        line_h=sum(b.line_h for b in blocks) / len(blocks),
+        lines=sum(b.lines for b in blocks),
+    )
+
+
+def scale_blocks(blocks: Sequence[OcrBlock], scale: int) -> List[OcrBlock]:
+    """把放大图上的坐标折回原图物理像素（scale=1 时原样返回）。"""
+    if scale <= 1:
+        return list(blocks)
+    return [
+        OcrBlock(text=b.text, x=b.x / scale, y=b.y / scale,
+                 w=b.w / scale, h=b.h / scale,
+                 line_h=b.line_h / scale, lines=b.lines)
+        for b in blocks
+    ]
+
+
+def recognize_blocks_from_result(result: Sequence, scale: int = 1) -> List[OcrBlock]:
+    """把 RapidOCR 的原始返回解析成段落块（纯函数，可单测）。
+
+    RapidOCR 每项是 [四点框, 文本, 置信度]；坐标按放大倍数折回原图尺度。
+    """
+    if not result:
+        return []
+    lines: List[OcrLine] = []
+    for item in result:
+        box, text = item[0], item[1]
+        xs = [p[0] for p in box]
+        ys = [p[1] for p in box]
+        lines.append(
+            OcrLine(
+                text=str(text),
+                x=float(min(xs)),
+                y=float(min(ys)),
+                w=float(max(xs) - min(xs)),
+                h=float(max(ys) - min(ys)),
+            )
+        )
+    return scale_blocks(group_lines(lines), scale)
 
 
 class OcrEngine:
@@ -117,9 +204,15 @@ class OcrEngine:
             return self._engine
 
     def recognize(self, image_path: str) -> str:
-        """识别图片文件，返回合并成段落的文本。失败抛 RuntimeError。
+        """识别图片文件，返回合并成段落的文本。失败抛 RuntimeError。"""
+        return "\n\n".join(b.text for b in self.recognize_blocks(image_path))
+
+    def recognize_blocks(self, image_path: str) -> List[OcrBlock]:
+        """识别图片文件，返回带包围框的段落列表（坐标 = 原图物理像素）。
 
         小图先放大（LANCZOS）再识别：屏幕字号小，直接喂模型漏字/错字明显。
+        放大只是识别手段，坐标必须折回原图尺度，否则原位翻译会把译文贴到
+        两倍远的地方——这是本功能最容易踩的坑。
         """
         engine = self._ensure_loaded()
         if engine is None:
@@ -135,24 +228,7 @@ class OcrEngine:
         result, _ = engine(np.array(img))
         log.info("OCR 完成：%s 行，放大×%d，耗时 %.1fs",
                  len(result) if result else 0, scale, time.monotonic() - t0)
-        if not result:
-            return ""
-        lines: List[OcrLine] = []
-        for item in result:
-            # RapidOCR 返回 [四点框, 文本, 置信度]
-            box, text = item[0], item[1]
-            xs = [p[0] for p in box]
-            ys = [p[1] for p in box]
-            lines.append(
-                OcrLine(
-                    text=str(text),
-                    x=float(min(xs)),
-                    y=float(min(ys)),
-                    w=float(max(xs) - min(xs)),
-                    h=float(max(ys) - min(ys)),
-                )
-            )
-        return merge_lines(lines)
+        return recognize_blocks_from_result(result, scale)
 
 
 # 全局单例

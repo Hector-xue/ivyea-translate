@@ -49,26 +49,41 @@ def _make_icon() -> QIcon:
 class _Bridge(QObject):
     """后台线程 -> 主线程的信号桥（截图 OCR 用）。"""
 
-    ocr_ready = Signal(str, QRect)   # 识别文本, 锚区域
+    ocr_ready = Signal(str, QRect)      # 识别文本, 锚区域（弹窗模式）
     ocr_failed = Signal(str, QRect)
+    blocks_ready = Signal(list, QRect)  # 带包围框的段落列表（原位模式）
+    blocks_failed = Signal(str, QRect)
 
 
 class OcrThread(threading.Thread):
-    def __init__(self, bridge: _Bridge, image_path: str, anchor: QRect):
+    """后台识别。mode="popup" 只要文本；mode="inplace" 还要每段的包围框。"""
+
+    def __init__(self, bridge: _Bridge, image_path: str, anchor: QRect,
+                 mode: str = "popup"):
         super().__init__(daemon=True)
         self._bridge = bridge
         self._path = image_path
         self._anchor = anchor
+        self._mode = mode
 
     def run(self):
+        inplace = self._mode == "inplace"
         try:
-            text = ocr_engine.recognize(self._path)
+            blocks = ocr_engine.recognize_blocks(self._path)
+            if inplace:
+                if blocks:
+                    self._bridge.blocks_ready.emit(list(blocks), self._anchor)
+                else:
+                    self._bridge.blocks_failed.emit("没有识别到文字", self._anchor)
+                return
+            text = "\n\n".join(b.text for b in blocks)
             if text.strip():
                 self._bridge.ocr_ready.emit(text, self._anchor)
             else:
                 self._bridge.ocr_failed.emit("没有识别到文字", self._anchor)
         except Exception as e:
-            self._bridge.ocr_failed.emit(str(e), self._anchor)
+            sig = self._bridge.blocks_failed if inplace else self._bridge.ocr_failed
+            sig.emit(str(e), self._anchor)
 
 
 class TranslateApp(QApplication):
@@ -86,6 +101,8 @@ class TranslateApp(QApplication):
         self.bridge = _Bridge()
         self.bridge.ocr_ready.connect(self._on_ocr_ready)
         self.bridge.ocr_failed.connect(self._on_ocr_failed)
+        self.bridge.blocks_ready.connect(self._on_blocks_ready)
+        self.bridge.blocks_failed.connect(self._on_blocks_failed)
 
         # 划词翻译触发：Ctrl+C+C（文本已在剪贴板，零注入最可靠）
         self.watcher = ClipboardWatcher(max_chars=int(self.cfg.get("double_copy.max_chars", 3000)))
@@ -99,11 +116,14 @@ class TranslateApp(QApplication):
         # 热键注册放在窗口之后，注册结果直接显示到设置页
         self.hotkeys = HotkeyManager()
         self.hotkeys.screenshot_translate.connect(self.trigger_screenshot_translate)
+        self.hotkeys.screenshot_inplace.connect(self.trigger_screenshot_inplace)
         self._register_hotkeys()
 
         self._popups: List[TranslationPopup] = []
         self._workers: List[TranslateWorker] = []
         self._overlay: Optional[CaptureOverlay] = None
+        self._capture_mode = "popup"
+        self._inplace: Optional[object] = None
 
         self._setup_tray()
         ocr_engine.warmup_async()
@@ -135,9 +155,12 @@ class TranslateApp(QApplication):
         act_show = QAction("打开主窗口", menu)
         act_show.triggered.connect(self.show_main_window)
         menu.addAction(act_show)
-        act_shot = QAction("截图翻译", menu)
+        act_shot = QAction("截图翻译（弹窗）", menu)
         act_shot.triggered.connect(self.trigger_screenshot_translate)
         menu.addAction(act_shot)
+        act_inplace = QAction("截图翻译（原位）", menu)
+        act_inplace.triggered.connect(self.trigger_screenshot_inplace)
+        menu.addAction(act_inplace)
         menu.addSeparator()
         # 临时暂停"Ctrl+C+C"监听（大量复制代码时用）
         self.act_pause = QAction("暂停划词翻译", menu)
@@ -265,8 +288,17 @@ class TranslateApp(QApplication):
     # ---------- 截图翻译 ----------
 
     def trigger_screenshot_translate(self) -> None:
+        """截图翻译（弹窗式）。"""
+        self._start_capture("popup")
+
+    def trigger_screenshot_inplace(self) -> None:
+        """截图翻译（原位式）：译文直接盖在原文位置上。"""
+        self._start_capture("inplace")
+
+    def _start_capture(self, mode: str) -> None:
         if self._overlay is not None:
             return
+        self._capture_mode = mode
         self._overlay = CaptureOverlay()
         self._overlay.region_selected.connect(self._on_region_selected)
         self._overlay.cancelled.connect(self._clear_overlay)
@@ -275,7 +307,21 @@ class TranslateApp(QApplication):
     def _clear_overlay(self) -> None:
         self._overlay = None
 
+    def _save_shot(self, pixmap: QPixmap) -> str:
+        import tempfile
+
+        tmp = tempfile.NamedTemporaryFile(
+            suffix=".png", prefix="ivyea_shot_", delete=False, dir=str(CONFIG_DIR)
+        )
+        tmp.close()
+        pixmap.save(tmp.name, "PNG")
+        return tmp.name
+
     def _on_region_selected(self, rect: QRect, pixmap: QPixmap) -> None:
+        if self._capture_mode == "inplace":
+            self._clear_overlay()
+            self._start_inplace(rect, pixmap)
+            return
         self._clear_overlay()
         # 弹窗立即出现（"识别中"状态），OCR 在后台跑完再回填——消除框选后的静默等待
         popup = TranslationPopup(original="", show_original=True,
@@ -286,15 +332,7 @@ class TranslateApp(QApplication):
         popup.show_near(rect)
         self._shot_popup = popup
         popup.destroyed.connect(lambda: setattr(self, "_shot_popup", None))
-
-        import tempfile
-
-        tmp = tempfile.NamedTemporaryFile(
-            suffix=".png", prefix="ivyea_shot_", delete=False, dir=str(CONFIG_DIR)
-        )
-        tmp.close()
-        pixmap.save(tmp.name, "PNG")
-        OcrThread(self.bridge, tmp.name, rect).start()
+        OcrThread(self.bridge, self._save_shot(pixmap), rect, "popup").start()
 
     def _on_ocr_ready(self, text: str, anchor: QRect) -> None:
         popup = getattr(self, "_shot_popup", None)
@@ -310,6 +348,63 @@ class TranslateApp(QApplication):
         if popup is None:
             return
         popup.set_failed(f"识别失败：{message}")
+
+    # ---------- 原位截图翻译 ----------
+
+    def _start_inplace(self, rect: QRect, pixmap: QPixmap) -> None:
+        from .ui.inplace_overlay import InPlaceOverlay
+
+        # 裁剪图是物理像素、覆盖层用逻辑坐标，两者之比就是这块屏的缩放
+        dpr = pixmap.width() / rect.width() if rect.width() else 1.0
+        overlay = InPlaceOverlay(rect, pixmap, dpr)
+        overlay.closed.connect(lambda: setattr(self, "_inplace", None))
+        self._inplace = overlay
+        overlay.start()
+        OcrThread(self.bridge, self._save_shot(pixmap), rect, "inplace").start()
+
+    def _on_blocks_ready(self, blocks: list, anchor: QRect) -> None:
+        from .free_engine import resolve_engine
+        from .ocr import bounding_block
+        from .translator import join_blocks, split_translation
+
+        overlay = self._inplace
+        if overlay is None:  # 用户已按 Esc 关掉，不再打扰
+            return
+        overlay.set_status("翻译中…")
+        source = join_blocks([b.text for b in blocks])
+        try:
+            client = resolve_engine(self.cfg)
+        except LLMError as e:
+            overlay.fail(str(e), 3000)
+            return
+        target = self._resolve_target(source, self.cfg.get("screenshot.target_language", ""))
+        worker = TranslateWorker(
+            client, source, target, self.cfg.get("translate.style", "general"),
+        )
+        self._workers.append(worker)
+
+        def done(full: str) -> None:
+            if self._inplace is not overlay:
+                return
+            parts = split_translation(full, len(blocks))
+            if parts:
+                overlay.set_blocks(blocks, parts)
+            else:
+                # 段数对不上：宁可整段贴一张卡，也不把译文贴错段落
+                overlay.set_blocks([bounding_block(blocks)], [full.strip()])
+            self.window.add_history(source, full, target,
+                                    self.cfg.get("translate.style", "general"))
+
+        worker.finished_ok.connect(done)
+        worker.failed.connect(lambda msg: overlay.fail(f"翻译失败：{msg}", 3000))
+        worker.finished.connect(
+            lambda w=worker: self._workers.remove(w) if w in self._workers else None)
+        overlay.closed.connect(worker.cancel)
+        worker.start()
+
+    def _on_blocks_failed(self, message: str, anchor: QRect) -> None:
+        if self._inplace is not None:
+            self._inplace.fail(f"识别失败：{message}", 2500)
 
     # ---------- 首次引导 ----------
 
@@ -329,8 +424,10 @@ class TranslateApp(QApplication):
             "三步上手：\n\n"
             f"1. 选中任意文字，按 {double_copy_label()}（连按两下 C）—— 立即翻译\n"
             f"2. 按 {pretty_hotkey(self.cfg.get('hotkeys.screenshot_translate', ''))} "
-            "框选屏幕 —— 截图翻译\n"
-            "3. 免配置即用（内置免费翻译）；到「设置」填自己的大模型可解锁风格与邮件助手\n\n"
+            "框选屏幕 —— 截图翻译（弹窗显示译文）\n"
+            f"3. 按 {pretty_hotkey(self.cfg.get('hotkeys.screenshot_inplace', ''))} "
+            "框选屏幕 —— 原位翻译（译文直接盖在原文上，悬停可看回原文，Esc 关闭）\n"
+            "4. 免配置即用（内置免费翻译）；到「设置」填自己的大模型可解锁风格与邮件助手\n\n"
             "程序常驻托盘，点托盘图标可随时打开本窗口。"
         )
         box.exec()

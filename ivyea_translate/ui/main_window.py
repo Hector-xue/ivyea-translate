@@ -918,7 +918,10 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         hk_form.addRow(_row_label("划词翻译", pad_top=1), self.dblcopy_check)
         self.hk_shot_edit = QLineEdit(self.cfg.get("hotkeys.screenshot_translate", ""))
         hk_form.addRow(_row_label("截图翻译快捷键"), _with_hint(
-            self.hk_shot_edit, "格式如 <ctrl>+<alt>+s（尖括号包修饰键）"))
+            self.hk_shot_edit, "框选后弹窗显示译文。格式如 <ctrl>+<alt>+s（尖括号包修饰键）"))
+        self.hk_inplace_edit = QLineEdit(self.cfg.get("hotkeys.screenshot_inplace", ""))
+        hk_form.addRow(_row_label("原位翻译快捷键"), _with_hint(
+            self.hk_inplace_edit, "框选后译文直接盖在原文位置上；悬停某段可看回原文，Esc 关闭"))
         self.shot_lang_combo = QComboBox()
         self.shot_lang_combo.addItem("跟随全局目标语言", "")
         for code, label in LANGUAGES:
@@ -1061,6 +1064,7 @@ class MainWindow(ShellWindowMixin, QMainWindow):
     def _on_save_settings(self) -> None:
         self._flush_provider_fields()
         self.cfg.set("hotkeys.screenshot_translate", self.hk_shot_edit.text().strip())
+        self.cfg.set("hotkeys.screenshot_inplace", self.hk_inplace_edit.text().strip())
         self.cfg.set("double_copy.enabled", self.dblcopy_check.isChecked())
         self.cfg.set("screenshot.target_language", self.shot_lang_combo.currentData())
         self.cfg.set("translate.primary_language", self.primary_lang_combo.currentData())

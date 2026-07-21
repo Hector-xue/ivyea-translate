@@ -79,3 +79,73 @@ def test_titlebar_row_is_drag_not_resize(qapp):
     assert p._edge_at(QPoint(card.right(), card.bottom())) == "bottomright"
     assert p._edge_at(card.center()) == ""
     p.deleteLater()
+
+
+def test_manual_resize_gives_extra_height_to_result(qapp):
+    """拉大弹窗时富余高度只给译文区；原文区仍按内容高度，分界线贴着原文底。"""
+    p = _popup(qapp, original="", show_original=True)
+    p.show()
+    qapp.processEvents()
+    p.set_original("One short line of source text.")
+    p.set_done("一行很短的译文。")
+    qapp.processEvents()
+    p.enter_manual_size()
+    p.resize(600, 700)
+    qapp.processEvents()
+    qapp.processEvents()
+
+    # 原文区高度 = max(内容高度, 文本框设计下限 60) + 少量内边距，与窗口高度无关
+    content_h = max(p._orig_view.document().size().height(), 60)
+    assert p._orig_view.height() <= content_h + 24   # 没吃掉富余空间
+    assert p.result_view.height() > p._orig_view.height() * 3
+    p.deleteLater()
+
+
+def test_status_flips_to_done_together_with_text(qapp):
+    """流式片段是合并刷新的，set_done 必须当场落定文本与状态。"""
+    p = _popup(qapp)
+    p.show()
+    qapp.processEvents()
+    for piece in ["你好", "，", "世界"]:
+        p.append_chunk(piece)
+    p.set_done("你好，世界")
+    assert p.status_label.text() == "已翻译"
+    assert p.result_view.toPlainText() == "你好，世界"
+    assert not p._flush_timer.isActive()
+    p.deleteLater()
+
+
+def test_streaming_flush_appends_without_losing_text(qapp):
+    """合并刷新是追加而不是整篇重设：刷完内容要和收到的片段一致。"""
+    p = _popup(qapp)
+    p.show()
+    qapp.processEvents()
+    for piece in ["abc", "def", "ghi"]:
+        p.append_chunk(piece)
+    p._on_flush_timeout()          # 直接触发一次合并刷新
+    assert p.result_view.toPlainText() == "abcdefghi"
+    p.append_chunk("jkl")
+    p._on_flush_timeout()
+    assert p.result_view.toPlainText() == "abcdefghijkl"
+    p.deleteLater()
+
+
+def test_cursor_returns_to_arrow_inside_card(qapp):
+    """贴过边之后把鼠标移回卡片内部，光标必须变回普通箭头（v0.24.0 会卡住）。"""
+    from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    p = _popup(qapp)
+    p.resize(520, 360)
+    card = p._card_rect()
+    p._sync_hover_cursor(QPoint(card.center().x(), card.top() - 6))
+    assert p.cursor().shape() == Qt.SizeVerCursor
+
+    # 通过真实的事件过滤器路径复位：鼠标移到标题行上的子控件
+    child = p.status_label
+    local = QPointF(child.rect().center())
+    ev = QMouseEvent(QEvent.MouseMove, local, child.mapToGlobal(child.rect().center()),
+                     Qt.NoButton, Qt.NoButton, Qt.NoModifier)
+    p.eventFilter(child, ev)
+    assert p.cursor().shape() == Qt.ArrowCursor
+    p.deleteLater()

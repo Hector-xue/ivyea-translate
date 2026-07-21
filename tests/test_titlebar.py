@@ -141,8 +141,18 @@ def test_settings_hints_align_with_field_text(qapp, tmp_path):
     qapp.processEvents()
     qapp.processEvents()
 
+    from PySide6.QtWidgets import QComboBox, QLineEdit
+
     hints = [w for w in win.findChildren(QLabel) if w.objectName() == "FieldHint"]
-    assert len(hints) == 3
+    assert len(hints) >= 3
     combo_text_x = win.engine_combo.mapTo(win, QPoint(0, 0)).x() + theme.FIELD_TEXT_INSET
     hint_text_x = hints[0].mapTo(win, QPoint(0, 0)).x() + theme.FIELD_TEXT_INSET
     assert hint_text_x == combo_text_x
+    # 每条说明都要和它解释的那个控件左对齐（新增字段最容易漏；不同表单列宽不同，
+    # 所以逐条跟自己那一行的控件比，而不是跟第一行比）
+    for hint in hints:
+        box = hint.parentWidget()
+        fields = box.findChildren(QLineEdit) + box.findChildren(QComboBox)
+        assert fields, "说明标签必须和它解释的控件在同一个容器里"
+        field_x = fields[0].mapTo(win, QPoint(0, 0)).x() + theme.FIELD_TEXT_INSET
+        assert hint.mapTo(win, QPoint(0, 0)).x() + theme.FIELD_TEXT_INSET == field_x

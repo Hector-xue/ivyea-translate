@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from typing import Optional, Tuple
 
-from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QCursor, QFont, QGuiApplication, QPixmap, QTextOption
+from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QCursor, QFont, QGuiApplication, QPixmap, QTextCursor, QTextOption
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -39,6 +39,7 @@ MARGIN_L, MARGIN_T, MARGIN_R, MARGIN_B = 20, 14, 20, 24
 RESIZE_GRAB_OUT = 12      # 卡片边缘往外多少像素算"抓边"
 RESIZE_GRAB_IN = 3        # 卡片边缘往内多少像素算"抓边"
 MIN_W, MIN_H = 320, 180
+FLUSH_MS = 60             # 流式片段的合并刷新间隔
 BRAND_NAME = "Ivyea Translate"
 BRAND_ICON = 16           # 弹窗品牌小标的边长
 
@@ -110,6 +111,11 @@ class TranslationPopup(QWidget):
         self._resize_start_geom: Optional[QRect] = None
         self._resize_start_global: Optional[QPoint] = None
         self._popup_width = width
+        self._pending_result: list = []
+        self._pending_explain: list = []
+        self._flush_timer = QTimer(self)
+        self._flush_timer.setSingleShot(True)
+        self._flush_timer.timeout.connect(self._on_flush_timeout)
         # 译文/原文区默认高度上限随屏幕自适应，长文本也能一眼浏览
         try:
             avail_h = QGuiApplication.primaryScreen().availableGeometry().height()
@@ -251,6 +257,8 @@ class TranslationPopup(QWidget):
 
         self.setFixedWidth(width)
         self._result_parts: list = []
+        self._card = card
+        self._install_hover_tracking(card)
 
     def _brand_mark(self) -> QLabel:
         """品牌 logo 小标；资源缺失（未打包/被删）时退回一枚品牌绿圆点。"""
@@ -289,20 +297,54 @@ class TranslationPopup(QWidget):
 
     # ---- 流式接口（连接 TranslateWorker 信号） ----
 
-    def append_chunk(self, piece: str) -> None:
-        self._result_parts.append(piece)
-        self.result_view.setPlainText("".join(self._result_parts))
-        sb = self.result_view.verticalScrollBar()
+    def _flush_pending(self, view: QTextEdit, buf_attr: str) -> None:
+        """把缓冲里的增量一次性追加到文本框末尾。
+
+        关键是"追加"而不是 setPlainText(整篇)：后者每来一个 SSE 片段就让整篇
+        文档重排，实测 400 片段要吃掉主线程 3 秒以上，且越往后越慢（前 50 片
+        3.5ms/片 → 后 50 片 11.8ms/片）。片段到得比渲染快，主线程事件队列就
+        积压，排在所有片段之后的 finished_ok 迟迟轮不到 —— 表现就是"译文早出
+        完了，'已翻译'还要等一会儿"。
+        """
+        pending = getattr(self, buf_attr)
+        if not pending:
+            return
+        setattr(self, buf_attr, [])
+        text = "".join(pending)
+        cursor = view.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        cursor.insertText(text)
+        sb = view.verticalScrollBar()
         sb.setValue(sb.maximum())
         self._relayout()
 
+    def _schedule_flush(self) -> None:
+        """合并刷新：60ms 内到达的片段并成一次渲染。"""
+        if self._flush_timer.isActive():
+            return
+        self._flush_timer.start(FLUSH_MS)
+
+    def _on_flush_timeout(self) -> None:
+        self._flush_pending(self.result_view, "_pending_result")
+        self._flush_pending(self._explain_view, "_pending_explain")
+
+    def append_chunk(self, piece: str) -> None:
+        self._result_parts.append(piece)
+        self._pending_result.append(piece)
+        self._schedule_flush()
+
     def set_done(self, full_text: str) -> None:
+        # 先落定文本再改状态：两者同帧完成，不会出现"译文出完了还写着翻译中"
+        self._flush_timer.stop()
+        self._pending_result = []
         self.result_view.setPlainText(full_text)
         self._result_parts = [full_text]
         self.status_label.setText("已翻译")
         self._relayout()
 
     def set_failed(self, message: str) -> None:
+        self._flush_timer.stop()
+        self._pending_result = []
         self.status_label.setText("失败")
         self.result_view.setPlainText(message)
         self.result_view.setStyleSheet(f"color: {theme.ACCENT};")
@@ -332,20 +374,26 @@ class TranslationPopup(QWidget):
 
     def set_explain_status(self, text: str) -> None:
         self._set_explain_visible(True)
+        self._pending_explain = []
         self._explain_view.setPlainText(text)
         self._relayout()
 
     def append_explain_chunk(self, piece: str) -> None:
+        # 首片到达时把"详解生成中…"占位清掉，之后一律追加
+        if not self._explain_parts:
+            self._explain_view.clear()
         self._explain_parts.append(piece)
-        self._explain_view.setPlainText("".join(self._explain_parts))
-        self._relayout()
+        self._pending_explain.append(piece)
+        self._schedule_flush()
 
     def set_explain_done(self, full_text: str) -> None:
+        self._pending_explain = []
         self._explain_parts = [full_text]
         self._explain_view.setPlainText(full_text)
         self._relayout()
 
     def set_explain_failed(self, message: str) -> None:
+        self._pending_explain = []
         self._explain_view.setStyleSheet(f"color: {theme.ACCENT}; font-size: 13px;")
         self._explain_view.setPlainText(message)
         self._relayout()
@@ -368,9 +416,11 @@ class TranslationPopup(QWidget):
         # 解除固定宽/高，允许四向自由拖拽
         self.setMinimumSize(MIN_W, MIN_H)
         self.setMaximumSize(MAX_SIZE, MAX_SIZE)
+        # 只放开译文区：原文区继续按内容长高（仍受 _orig_max_h 封顶）。
+        # 早期版本把原文区也 set_free()，两个框都成了 Expanding，拉大弹窗时
+        # 富余高度被原文区按比例吃掉——原文只有两行也撑成一大片空白、分界线
+        # 悬在半空，译文反而被挤在底部小框里。多出来的高度只该给译文。
         self.result_view.set_free()
-        if self._orig_view is not None:
-            self._orig_view.set_free()
 
     # ---- 边缘拖拽缩放（无边框窗口自绘） ----
 
@@ -391,6 +441,35 @@ class TranslationPopup(QWidget):
         bottom = in_x and r.bottom() - inn <= pos.y() <= r.bottom() + out
         return ("top" if top else "") + ("bottom" if bottom else "") + \
                ("left" if left else "") + ("right" if right else "")
+
+    def _install_hover_tracking(self, root: QWidget) -> None:
+        """让卡片及其所有子控件把鼠标移动转发上来，光标才能及时归位。
+
+        弹窗自己开了 mouseTracking，但那只覆盖卡片外那圈透明留白；鼠标一旦移进
+        卡片，事件落到子控件身上（无按键的 MouseMove 不会自动传给父窗口），
+        弹窗再也收不到移动事件，_edge_at 的复位逻辑根本没机会跑；而子控件默认
+        继承父窗口光标，于是贴过边之后整张卡片一直卡在上下箭头，直到切窗口才被
+        系统重置。这里递归开 tracking + 装事件过滤器，把移动事件补回来。
+        """
+        for w in [root] + root.findChildren(QWidget):
+            w.setMouseTracking(True)
+            w.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.MouseMove and isinstance(obj, QWidget):
+            if obj is self._card or self._card.isAncestorOf(obj):
+                self._sync_hover_cursor(obj.mapTo(self, event.position().toPoint()))
+        return super().eventFilter(obj, event)
+
+    def _sync_hover_cursor(self, pos: QPoint) -> None:
+        if self._resize_edge or self._drag_offset is not None:
+            return  # 拖拽/缩放进行中，光标由按下时那一刻决定
+        self.setCursor(self._CURSORS.get(self._edge_at(pos), Qt.ArrowCursor))
+
+    def leaveEvent(self, event):
+        if not self._resize_edge and self._drag_offset is None:
+            self.unsetCursor()
+        super().leaveEvent(event)
 
     _CURSORS = {
         "left": Qt.SizeHorCursor, "right": Qt.SizeHorCursor,
@@ -502,8 +581,7 @@ class TranslationPopup(QWidget):
             event.accept()
             return
         # 无按键：靠近边缘时给出缩放光标提示
-        edge = self._edge_at(event.position().toPoint())
-        self.setCursor(self._CURSORS.get(edge, Qt.ArrowCursor))
+        self._sync_hover_cursor(event.position().toPoint())
 
     def mouseReleaseEvent(self, event):
         self._drag_offset = None

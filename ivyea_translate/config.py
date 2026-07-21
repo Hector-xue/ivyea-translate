@@ -100,6 +100,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "hotkeys": {
         # 仅截图翻译需要全局热键；划词翻译走"Ctrl+C+C"，无需热键
         "screenshot_translate": "<ctrl>+<alt>+s",
+        # 原位截图翻译：译文直接盖在原文位置上，不弹窗
+        "screenshot_inplace": "<ctrl>+<alt>+d",
     },
     "double_copy": {
         # Ctrl+C+C 触发划词翻译，无需注入按键最可靠

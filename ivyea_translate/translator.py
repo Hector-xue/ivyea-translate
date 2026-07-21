@@ -5,8 +5,9 @@ TranslateWorker 是 QThread 包装：流式增量经信号发给 UI 线程。
 """
 from __future__ import annotations
 
+import re
 from collections import OrderedDict
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from PySide6.QtCore import QThread, Signal
 
@@ -178,6 +179,25 @@ def parse_email_output(text: str) -> tuple:
         subject = lines[0][len("subject:"):].strip()
         body = (lines[1] if len(lines) > 1 else "").strip()
     return subject, body
+
+
+def join_blocks(texts: Sequence[str]) -> str:
+    """把多段原文拼成一次请求（段间空行）。原位翻译用。"""
+    return "\n\n".join(t.strip() for t in texts if t and t.strip())
+
+
+def split_translation(text: str, count: int) -> List[str]:
+    """把整段译文按空行切回 count 段（纯函数）。
+
+    对不上就返回空列表，让调用方降级成"整段译文显示成一张卡片"——
+    宁可少一点原位感，也绝不把译文贴错段落。
+    """
+    if count <= 0:
+        return []
+    parts = [p.strip() for p in re.split(r"\n\s*\n", (text or "").strip()) if p.strip()]
+    if count == 1:
+        return ["\n\n".join(parts)] if parts else []
+    return parts if len(parts) == count else []
 
 
 def build_messages(text: str, target_language: str, style: str) -> List[Dict[str, str]]:
