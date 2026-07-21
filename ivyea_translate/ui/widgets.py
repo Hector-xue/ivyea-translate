@@ -10,10 +10,63 @@ AutoGrowTextEdit：高度随内容走的文本框。
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QTextOption
+from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPixmap, QTextOption
 from PySide6.QtWidgets import QSizePolicy, QTextEdit
 
 MAX_SIZE = 16777215  # Qt 的尺寸上限，等价于"不封顶"
+
+
+def screen_dpr() -> float:
+    """当前主屏缩放比（用于把图标画成高清位图，避免 125%/150% 下发虚）。"""
+    from PySide6.QtGui import QGuiApplication
+
+    try:
+        screen = QGuiApplication.primaryScreen()
+        return float(screen.devicePixelRatio()) if screen else 1.0
+    except Exception:
+        return 1.0
+
+
+def pin_icon(color: str, size: int = 16, opacity: float = 1.0) -> QIcon:
+    """自绘图钉图标。
+
+    不用 📌 这类 emoji：Windows 10 上 emoji 由 Segoe UI Emoji 以彩色位图渲染，
+    字形的实际外框比字号大（还带自己的行距），塞进 26x26 的小按钮里必然被裁掉
+    一角——这就是 v0.3.x 图钉"显示不完全"的原因。改成按当前 DPI 画的矢量图标，
+    尺寸完全可控，颜色也能跟品牌走。
+    """
+    dpr = screen_dpr()
+    px = max(1, int(round(size * dpr)))
+    pm = QPixmap(px, px)
+    pm.fill(Qt.transparent)
+    pm.setDevicePixelRatio(dpr)
+
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    p.scale(px / 24.0, px / 24.0)  # 以下坐标一律在 24x24 的图标格里
+    path = QPainterPath()
+    path.addRoundedRect(8.0, 2.0, 8.0, 3.2, 1.4, 1.4)        # 钉帽
+    body = QPainterPath()
+    body.moveTo(9.6, 5.2)
+    body.lineTo(14.4, 5.2)
+    body.lineTo(16.2, 13.6)
+    body.lineTo(7.8, 13.6)
+    body.closeSubpath()                                       # 钉身
+    path = path.united(body)
+    plate = QPainterPath()
+    plate.addRoundedRect(6.0, 13.2, 12.0, 2.4, 1.2, 1.2)      # 底盘
+    path = path.united(plate)
+    needle = QPainterPath()
+    needle.moveTo(11.2, 15.4)
+    needle.lineTo(12.8, 15.4)
+    needle.lineTo(12.0, 21.6)
+    needle.closeSubpath()                                     # 针尖
+    path = path.united(needle)
+    c = QColor(color)  # 只吃 #RRGGBB 这类 QColor 认得的写法，透明度走 opacity
+    c.setAlphaF(max(0.0, min(1.0, opacity)))
+    p.fillPath(path, c)
+    p.end()
+    return QIcon(pm)
 
 
 class AutoGrowTextEdit(QTextEdit):

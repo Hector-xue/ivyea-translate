@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from typing import Optional, Tuple
 
-from PySide6.QtCore import QPoint, QRect, Qt, QTimer, Signal
-from PySide6.QtGui import QCursor, QGuiApplication, QTextOption
+from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QCursor, QFont, QGuiApplication, QPixmap, QTextOption
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -27,14 +27,20 @@ from PySide6.QtWidgets import (
 )
 
 from . import theme
-from .widgets import MAX_SIZE, AutoGrowTextEdit
+from .widgets import MAX_SIZE, AutoGrowTextEdit, pin_icon, screen_dpr
 
 Rect = Tuple[int, int, int, int]  # x, y, w, h
 
 # 弹窗阴影留边（也是拖拽调整大小的抓取带）
 MARGIN_L, MARGIN_T, MARGIN_R, MARGIN_B = 20, 14, 20, 24
-RESIZE_GRAB = 12          # 距卡片边缘多少像素内算"抓边"
+# 抓边带内外不对称：卡片外那圈透明留白全给缩放（那里没有任何内容），卡片内
+# 只探进极窄一条。否则标题行整条都在"上边缘"判定里，鼠标一放上去就变成上下
+# 箭头，可这一行的本职是拖动弹窗，光标必须是普通箭头。
+RESIZE_GRAB_OUT = 12      # 卡片边缘往外多少像素算"抓边"
+RESIZE_GRAB_IN = 3        # 卡片边缘往内多少像素算"抓边"
 MIN_W, MIN_H = 320, 180
+BRAND_NAME = "Ivyea Translate"
+BRAND_ICON = 16           # 弹窗品牌小标的边长
 
 
 def _clamp(v: int, lo: int, hi: int) -> int:
@@ -143,8 +149,27 @@ class TranslationPopup(QWidget):
         lay.setContentsMargins(18, 12, 18, 8)
         lay.setSpacing(8)
 
-        # 标题行：状态 + 钉住 + 复制 + 关闭（整行也是拖动把手）
+        # 标题行：品牌小标 + 状态 + 钉住 + 复制 + 关闭（整行也是拖动把手）
+        # 品牌放这里而不是另起一条横幅：标题行本来就有大片留白，塞进去不长高、
+        # 不挤译文，而且弹窗常年浮在别人家窗口上，一眼能认出是谁弹的。
         head = QHBoxLayout()
+        head.setSpacing(6)
+        head.addWidget(self._brand_mark())
+        brand = QLabel(BRAND_NAME)
+        brand.setObjectName("Wordmark")
+        bf = QFont()
+        bf.setPointSize(9)
+        bf.setBold(True)
+        bf.setLetterSpacing(QFont.PercentageSpacing, 102)
+        brand.setFont(bf)
+        head.addWidget(brand)
+        dot = QLabel("·")
+        dot.setStyleSheet(f"color: {theme.TEXT_MUTED}; font-size: 13px;")
+        head.addWidget(dot)
+        # 窄弹窗（ui.popup_width 被调小）优先保状态文字，字标收成只剩 logo
+        if width < 460:
+            brand.setVisible(False)
+            dot.setVisible(False)
         self.status_label = QLabel("翻译中…")
         self.status_label.setObjectName("Hint")
         head.addWidget(self.status_label)
@@ -154,11 +179,13 @@ class TranslationPopup(QWidget):
         self.explain_btn.setToolTip("讲解重点词、语法与更地道的说法（需大模型）")
         self.explain_btn.clicked.connect(self._on_explain_clicked)
         self.explain_btn.setVisible(self._show_explain)
-        self.pin_btn = QPushButton("📌")
+        self.pin_btn = QPushButton()
         self.pin_btn.setObjectName("Ghost")
         self.pin_btn.setFixedSize(26, 26)
+        self.pin_btn.setIconSize(QSize(15, 15))
         self.pin_btn.setToolTip("钉住（失焦不关闭）")
         self.pin_btn.clicked.connect(self._toggle_pin)
+        self._sync_pin_style()
         self.copy_btn = QPushButton("复制")
         self.copy_btn.setObjectName("Ghost")
         self.copy_btn.clicked.connect(self._copy_result)
@@ -224,6 +251,24 @@ class TranslationPopup(QWidget):
 
         self.setFixedWidth(width)
         self._result_parts: list = []
+
+    def _brand_mark(self) -> QLabel:
+        """品牌 logo 小标；资源缺失（未打包/被删）时退回一枚品牌绿圆点。"""
+        lb = QLabel()
+        path = theme.asset_path("logo.png")
+        if path:
+            dpr = screen_dpr()
+            pm = QPixmap(path)
+            if not pm.isNull():
+                side = max(1, int(round(BRAND_ICON * dpr)))
+                pm = pm.scaled(side, side, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                pm.setDevicePixelRatio(dpr)
+                lb.setPixmap(pm)
+                lb.setFixedSize(BRAND_ICON, BRAND_ICON)
+                return lb
+        lb.setText("●")
+        lb.setStyleSheet(f"color: {theme.ACCENT}; font-size: 12px;")
+        return lb
 
     # ---- 两段式（截图翻译）：先"识别中"，OCR 完成后回填原文 ----
 
@@ -336,14 +381,14 @@ class TranslationPopup(QWidget):
 
     def _edge_at(self, pos: QPoint) -> str:
         r = self._card_rect()
-        g = RESIZE_GRAB
+        out, inn = RESIZE_GRAB_OUT, RESIZE_GRAB_IN
         # 需落在卡片纵/横跨度内（含抓取带）才算对应边
-        in_x = r.left() - g <= pos.x() <= r.right() + g
-        in_y = r.top() - g <= pos.y() <= r.bottom() + g
-        left = in_y and abs(pos.x() - r.left()) <= g
-        right = in_y and abs(pos.x() - r.right()) <= g
-        top = in_x and abs(pos.y() - r.top()) <= g
-        bottom = in_x and abs(pos.y() - r.bottom()) <= g
+        in_x = r.left() - out <= pos.x() <= r.right() + out
+        in_y = r.top() - out <= pos.y() <= r.bottom() + out
+        left = in_y and r.left() - out <= pos.x() <= r.left() + inn
+        right = in_y and r.right() - inn <= pos.x() <= r.right() + out
+        top = in_x and r.top() - out <= pos.y() <= r.top() + inn
+        bottom = in_x and r.bottom() - inn <= pos.y() <= r.bottom() + out
         return ("top" if top else "") + ("bottom" if bottom else "") + \
                ("left" if left else "") + ("right" if right else "")
 
@@ -399,7 +444,19 @@ class TranslationPopup(QWidget):
 
     def _toggle_pin(self) -> None:
         self._pinned = not self._pinned
-        self.pin_btn.setStyleSheet(f"color: {theme.ACCENT};" if self._pinned else "")
+        self._sync_pin_style()
+
+    def _sync_pin_style(self) -> None:
+        """图钉一律走品牌绿：未钉住淡一档，钉住时实心 + 品牌绿底衬。"""
+        self.pin_btn.setIcon(pin_icon(theme.ACCENT, 15, 1.0 if self._pinned else 0.55))
+        bg = theme.ACCENT_SOFT if self._pinned else "transparent"
+        self.pin_btn.setStyleSheet(
+            "QPushButton {"
+            f" background: {bg}; border: none; border-radius: 8px; padding: 0;"
+            "}"
+            f"QPushButton:hover {{ background: {theme.ACCENT_SOFT}; }}"
+        )
+        self.pin_btn.setToolTip("已钉住（点一下取消）" if self._pinned else "钉住（失焦不关闭）")
 
     def _toggle_original(self) -> None:
         if self._orig_view is None:
