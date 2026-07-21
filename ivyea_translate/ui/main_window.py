@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import List, Optional
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -31,6 +30,7 @@ from ..config import Config, LANGUAGES, PROVIDER_PRESETS, STYLES
 from ..llm import LLMError, client_from_config
 from ..translator import TranslateWorker
 from . import theme
+from .titlebar import FramelessResizeMixin, TitleBar, apply_frameless, polish_windows_frame
 from .widgets import AutoGrowTextEdit
 
 
@@ -58,6 +58,41 @@ def _glass_card() -> QWidget:
     card = QWidget()
     card.setObjectName("GlassCard")
     return card
+
+
+def _row_label(text: str, pad_top: int = 7) -> QLabel:
+    """表单左侧标签。
+
+    字段整体顶对齐（字段里可能带一行说明，垂直居中会让标签飘到说明中间），
+    再用 pad_top 把标签文字压到控件首行的视觉中线上；控件高度不同的行
+    （复选框、纯文本状态）自己传 pad_top。
+    """
+    label = QLabel(text)
+    label.setStyleSheet(f"padding-top: {pad_top}px; background: transparent;")
+    return label
+
+
+def _with_hint(field, hint: str) -> QWidget:
+    """把控件和它的浅色说明合成一个表单 field：说明紧贴控件下方并左对齐。
+
+    之前是 form.addRow("", hint) 让说明单独占一行 —— 说明没有控件的内边距，
+    文字比控件里的文字左移 13px，看着两头不靠；行间距又把它和所属控件拉开。
+    """
+    box = QWidget()
+    v = QVBoxLayout(box)
+    v.setContentsMargins(0, 0, 0, 0)
+    v.setSpacing(4)
+    if isinstance(field, QWidget):
+        v.addWidget(field)
+    else:
+        v.addLayout(field)
+    label = QLabel(hint)
+    label.setObjectName("FieldHint")
+    label.setWordWrap(True)
+    # 说明里出现 <ctrl>+<alt>+s 这类尖括号时，QLabel 会当富文本标签吞掉
+    label.setTextFormat(Qt.PlainText)
+    v.addWidget(label)
+    return box
 
 
 def _scrollable(inner: QWidget) -> QScrollArea:
@@ -125,7 +160,7 @@ class _HistoryRow(QWidget):
         self.activated.emit()
 
 
-class MainWindow(QMainWindow):
+class MainWindow(FramelessResizeMixin, QMainWindow):
     settings_saved = Signal()
     # 测试连接在后台线程跑，结果必须经信号回主线程；
     # 之前用 QTimer.singleShot(0,...) 在非 Qt 线程启动定时器，回调永不执行，
@@ -147,56 +182,49 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(520, 420)  # 允许自由缩小；设置页有滚动容器兜底
         self._test_finished.connect(self._show_test_result)
 
+        # 无边框：系统白色标题栏去掉，自绘标题栏与窗口共用一层渐变
+        self._frameless = apply_frameless(self)
+        if self._frameless:
+            self.setMouseTracking(True)  # 贴边时光标变缩放箭头
+
         root = QWidget()
         root.setObjectName("Root")
+        root.setMouseTracking(True)
         self.setCentralWidget(root)
         outer = QVBoxLayout(root)
-        outer.setContentsMargins(24, 20, 24, 24)
-        outer.setSpacing(14)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        # 顶栏
-        head = QHBoxLayout()
-        dot = QLabel()
-        logo = theme.asset_path("logo.png")
-        if logo:
-            from PySide6.QtGui import QPixmap
+        # 标题栏即应用头部（Mac 上保留原生红绿灯，这里只当横幅不画窗口按钮）
+        self.titlebar = TitleBar("Ivyea Translate · 随手即译", with_buttons=self._frameless, parent=self)
+        self.head_status = self.titlebar.status  # 兼容旧引用
+        outer.addWidget(self.titlebar)
 
-            dot.setPixmap(QPixmap(logo).scaled(
-                26, 26, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        else:
-            dot.setText("●")
-            dot.setStyleSheet(f"color: {theme.ACCENT}; font-size: 16px;")
-        title = QLabel("Ivyea Translate · 随手即译")
-        f = QFont()
-        f.setPointSize(13)
-        f.setBold(True)
-        title.setFont(f)
-        self.head_status = QLabel("")
-        self.head_status.setObjectName("Hint")
-        head.addWidget(dot)
-        head.addWidget(title)
-        head.addStretch(1)
-        head.addWidget(self.head_status)
-        outer.addLayout(head)
+        body = QWidget()
+        body.setMouseTracking(True)
+        body_lay = QVBoxLayout(body)
+        body_lay.setContentsMargins(14, 0, 14, 12)
+        body_lay.setSpacing(6)
+        outer.addWidget(body, 1)
 
-        tabs = QTabWidget()
-        tabs.addTab(self._build_translate_tab(), "翻译")
-        tabs.addTab(self._build_email_tab(), "写作")
-        tabs.addTab(self._build_history_tab(), "历史")
-        tabs.addTab(self._build_settings_tab(), "设置")
-        outer.addWidget(tabs, 1)
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self._build_translate_tab(), "翻译")
+        self.tabs.addTab(self._build_email_tab(), "写作")
+        self.tabs.addTab(self._build_history_tab(), "历史")
+        self.tabs.addTab(self._build_settings_tab(), "设置")
+        body_lay.addWidget(self.tabs, 1)
 
     # ================= 翻译页 =================
 
     def _build_translate_tab(self) -> QWidget:
         page = QWidget()
         lay = QVBoxLayout(page)
-        lay.setContentsMargins(0, 12, 8, 12)
-        lay.setSpacing(12)
+        lay.setContentsMargins(0, 6, 6, 8)
+        lay.setSpacing(10)
 
         card = _glass_card()
         card_lay = QVBoxLayout(card)
-        card_lay.setContentsMargins(18, 16, 18, 18)
+        card_lay.setContentsMargins(16, 13, 16, 14)
         card_lay.setSpacing(10)
 
         # 语言/风格选择行
@@ -236,8 +264,8 @@ class MainWindow(QMainWindow):
         ))
         hint.setObjectName("Hint")
         hint.setWordWrap(True)  # 窄窗自动换行，避免长文案顶宽导致横向溢出
+        # 只给提示一个伸展位：再加 addStretch 会把空间对半分，宽窗里提示也被迫折行
         btn_row.addWidget(hint, 1)
-        btn_row.addStretch(1)
         self.clear_btn = QPushButton("清空")
         self.clear_btn.setObjectName("Ghost")
         self.clear_btn.clicked.connect(self._clear_translate)
@@ -251,7 +279,7 @@ class MainWindow(QMainWindow):
 
         result_card = _glass_card()
         res_lay = QVBoxLayout(result_card)
-        res_lay.setContentsMargins(18, 14, 18, 16)
+        res_lay.setContentsMargins(16, 12, 16, 13)
         res_head = QHBoxLayout()
         rt = QLabel("译文")
         rt.setObjectName("CardTitle")
@@ -411,12 +439,12 @@ class MainWindow(QMainWindow):
 
         page = QWidget()
         lay = QVBoxLayout(page)
-        lay.setContentsMargins(0, 12, 8, 12)
-        lay.setSpacing(12)
+        lay.setContentsMargins(0, 6, 6, 8)
+        lay.setSpacing(10)
 
         card = _glass_card()
         card_lay = QVBoxLayout(card)
-        card_lay.setContentsMargins(18, 16, 18, 18)
+        card_lay.setContentsMargins(16, 13, 16, 14)
         card_lay.setSpacing(10)
 
         from ..translator import COMPOSE_SCENARIOS
@@ -472,7 +500,7 @@ class MainWindow(QMainWindow):
 
         result_card = _glass_card()
         res_lay = QVBoxLayout(result_card)
-        res_lay.setContentsMargins(18, 14, 18, 16)
+        res_lay.setContentsMargins(16, 12, 16, 13)
         res_lay.setSpacing(8)
 
         # 主题行（仅邮件场景显示）
@@ -659,7 +687,7 @@ class MainWindow(QMainWindow):
     def _build_history_tab(self) -> QWidget:
         page = QWidget()
         lay = QVBoxLayout(page)
-        lay.setContentsMargins(0, 12, 0, 0)
+        lay.setContentsMargins(0, 6, 0, 0)
         head = QHBoxLayout()
         tip = QLabel("最近翻译（双击回填到翻译页）")
         tip.setObjectName("Hint")
@@ -742,7 +770,7 @@ class MainWindow(QMainWindow):
     def _activate_entry(self, entry: dict) -> None:
         self.source_edit.setPlainText(entry["source"])
         self.result_view.setPlainText(entry["result"])
-        self.centralWidget().findChild(QTabWidget).setCurrentIndex(0)
+        self.tabs.setCurrentIndex(0)
 
     def _clear_history(self) -> None:
         self._history = []
@@ -761,33 +789,31 @@ class MainWindow(QMainWindow):
         scroll.setStyleSheet("QScrollArea { background: transparent; } QScrollArea > QWidget > QWidget { background: transparent; }")
         page = QWidget()
         lay = QVBoxLayout(page)
-        lay.setContentsMargins(0, 12, 8, 12)
-        lay.setSpacing(12)
+        lay.setContentsMargins(0, 6, 6, 8)
+        lay.setSpacing(10)
         scroll.setWidget(page)
 
         # 翻译引擎卡
         eng_card = _glass_card()
         ec = QVBoxLayout(eng_card)
-        ec.setContentsMargins(18, 14, 18, 16)
+        ec.setContentsMargins(16, 12, 16, 13)
         et = QLabel("翻译引擎")
         et.setObjectName("CardTitle")
         ec.addWidget(et)
         eng_form = QFormLayout()
         eng_form.setHorizontalSpacing(14)
-        eng_form.setVerticalSpacing(10)
+        eng_form.setVerticalSpacing(8)
+        eng_form.setLabelAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.engine_combo = QComboBox()
         self.engine_combo.addItem("自动（未配置模型时用免费翻译）", "auto")
         self.engine_combo.addItem("免费翻译（无需配置，开箱即用）", "free")
         self.engine_combo.addItem("我的大模型", "llm")
         self._select_combo_data(self.engine_combo, self.cfg.get("translate.engine", "auto"))
-        eng_form.addRow("引擎", self.engine_combo)
-        eng_hint = QLabel(
-            "免费翻译基于公开翻译接口，无需 API Key 即可直接使用；\n"
-            "配置大模型可获得更高质量、风格控制与邮件助手。"
-        )
-        eng_hint.setObjectName("Hint")
-        eng_hint.setWordWrap(True)
-        eng_form.addRow("", eng_hint)
+        eng_form.addRow(_row_label("引擎"), _with_hint(
+            self.engine_combo,
+            "免费翻译基于公开翻译接口，无需 API Key 即可直接使用；"
+            "配置大模型可获得更高质量、风格控制与邮件助手。",
+        ))
         # 自动互译语言对（目标语言选"自动"时在这两者间智能切换）
         pair_row = QHBoxLayout()
         self.primary_lang_combo = QComboBox()
@@ -801,35 +827,35 @@ class MainWindow(QMainWindow):
         arrow = QLabel("↔")
         pair_row.addWidget(arrow)
         pair_row.addWidget(self.secondary_lang_combo, 1)
-        eng_form.addRow("自动互译语言", pair_row)
-        pair_hint = QLabel("目标语言设为「自动」时：选中前者的文本→翻成后者，其余→翻成前者。")
-        pair_hint.setObjectName("Hint")
-        pair_hint.setWordWrap(True)
-        eng_form.addRow("", pair_hint)
+        eng_form.addRow(_row_label("自动互译语言"), _with_hint(
+            pair_row,
+            "目标语言设为「自动」时：选中前者的文本→翻成后者，其余→翻成前者。",
+        ))
         ec.addLayout(eng_form)
         lay.addWidget(eng_card)
 
         # 模型卡
         model_card = _glass_card()
         mc = QVBoxLayout(model_card)
-        mc.setContentsMargins(18, 14, 18, 16)
+        mc.setContentsMargins(16, 12, 16, 13)
         mt = QLabel("翻译模型（OpenAI 兼容接口）")
         mt.setObjectName("CardTitle")
         mc.addWidget(mt)
         form = QFormLayout()
         form.setHorizontalSpacing(14)
-        form.setVerticalSpacing(10)
+        form.setVerticalSpacing(8)
+        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignTop)
 
         self.preset_combo = QComboBox()
         for key, preset in PROVIDER_PRESETS.items():
             self.preset_combo.addItem(preset["label"], key)
         self._select_combo_data(self.preset_combo, self.cfg.get("provider.preset"))
         self.preset_combo.currentIndexChanged.connect(self._on_preset_changed)
-        form.addRow("服务商", self.preset_combo)
+        form.addRow(_row_label("服务商"), self.preset_combo)
 
         self.base_url_edit = QLineEdit(self.cfg.get("provider.base_url", ""))
         self.base_url_edit.setPlaceholderText("https://api.deepseek.com/v1")
-        form.addRow("接口地址", self.base_url_edit)
+        form.addRow(_row_label("接口地址"), self.base_url_edit)
 
         key_row = QHBoxLayout()
         self.api_key_edit = QLineEdit(self.cfg.get("provider.api_key", ""))
@@ -843,11 +869,11 @@ class MainWindow(QMainWindow):
         )
         key_row.addWidget(self.api_key_edit, 1)
         key_row.addWidget(show_btn)
-        form.addRow("API Key", key_row)
+        form.addRow(_row_label("API Key"), key_row)
 
         self.model_edit = QLineEdit(self.cfg.get("provider.model", ""))
         self.model_edit.setPlaceholderText("deepseek-chat")
-        form.addRow("模型名", self.model_edit)
+        form.addRow(_row_label("模型名"), self.model_edit)
         mc.addLayout(form)
 
         test_row = QHBoxLayout()
@@ -863,40 +889,39 @@ class MainWindow(QMainWindow):
         # 快捷键 + 行为卡
         hk_card = _glass_card()
         hc = QVBoxLayout(hk_card)
-        hc.setContentsMargins(18, 14, 18, 16)
+        hc.setContentsMargins(16, 12, 16, 13)
         ht = QLabel("快捷键与行为")
         ht.setObjectName("CardTitle")
         hc.addWidget(ht)
         hk_form = QFormLayout()
         hk_form.setHorizontalSpacing(14)
-        hk_form.setVerticalSpacing(10)
+        hk_form.setVerticalSpacing(8)
+        hk_form.setLabelAlignment(Qt.AlignLeft | Qt.AlignTop)
         from ..platform_ui import double_copy_label
 
         self.dblcopy_check = QCheckBox(f"选中文字后按 {double_copy_label()} 即翻译")
         self.dblcopy_check.setChecked(bool(self.cfg.get("double_copy.enabled", True)))
-        hk_form.addRow("划词翻译", self.dblcopy_check)
+        hk_form.addRow(_row_label("划词翻译", pad_top=1), self.dblcopy_check)
         self.hk_shot_edit = QLineEdit(self.cfg.get("hotkeys.screenshot_translate", ""))
-        hk_form.addRow("截图翻译快捷键", self.hk_shot_edit)
-        hk_hint = QLabel('格式如 <ctrl>+<alt>+s（尖括号包修饰键）')
-        hk_hint.setObjectName("Hint")
-        hk_form.addRow("", hk_hint)
+        hk_form.addRow(_row_label("截图翻译快捷键"), _with_hint(
+            self.hk_shot_edit, "格式如 <ctrl>+<alt>+s（尖括号包修饰键）"))
         self.shot_lang_combo = QComboBox()
         self.shot_lang_combo.addItem("跟随全局目标语言", "")
         for code, label in LANGUAGES:
             self.shot_lang_combo.addItem(label, code)
         self._select_combo_data(self.shot_lang_combo, self.cfg.get("screenshot.target_language", ""))
-        hk_form.addRow("截图翻译目标语言", self.shot_lang_combo)
+        hk_form.addRow(_row_label("截图翻译目标语言"), self.shot_lang_combo)
         self.hotkey_status = QLabel("")
         self.hotkey_status.setObjectName("Hint")
         self.hotkey_status.setWordWrap(True)
-        hk_form.addRow("状态", self.hotkey_status)
+        hk_form.addRow(_row_label("状态", pad_top=0), self.hotkey_status)
         hc.addLayout(hk_form)
         lay.addWidget(hk_card)
 
         # 关于与更新卡
         up_card = _glass_card()
         uc = QVBoxLayout(up_card)
-        uc.setContentsMargins(18, 14, 18, 16)
+        uc.setContentsMargins(16, 12, 16, 13)
         ut = QLabel("关于与更新")
         ut.setObjectName("CardTitle")
         uc.addWidget(ut)
@@ -1048,6 +1073,14 @@ class MainWindow(QMainWindow):
         else:
             self.hotkey_status.setStyleSheet("color: #3AA675;")
             self.hotkey_status.setText("全局快捷键已生效")
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # 圆角/投影要拿到真实窗口句柄才能设，show 之后才有；只做一次
+        if self._frameless and not getattr(self, "_frame_polished", False):
+            self._frame_polished = True
+            polish_windows_frame(self)
+        self.titlebar.sync_max_glyph()
 
     # 关窗只是隐藏（常驻托盘）；退出流程中必须放行
     def closeEvent(self, event):

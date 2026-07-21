@@ -18,6 +18,9 @@ TEXT_PRIMARY = "#3C4A34"    # 深叶绿灰
 TEXT_SECONDARY = "#93A388"
 RADIUS = 18
 RADIUS_SM = 12
+# 输入框/下拉框内文字距控件左边缘的距离（12px padding + 1px 边框）：
+# 控件下方的说明文字按这个值内缩，才会和控件里的文字左对齐
+FIELD_TEXT_INSET = 13
 
 
 def asset_path(name: str) -> str:
@@ -79,6 +82,33 @@ QLabel#Hint {{
     color: {TEXT_SECONDARY};
     font-size: 12px;
     background: transparent;
+}}
+/* 表单里紧贴控件下方的说明：左侧内缩到与控件内文字同一条竖线上 */
+QLabel#FieldHint {{
+    color: {TEXT_SECONDARY};
+    font-size: 12px;
+    background: transparent;
+    padding-left: {FIELD_TEXT_INSET}px;
+}}
+/* 自绘标题栏：与窗口共用同一层渐变，不画任何底色/分隔线 */
+QWidget#TitleBar {{
+    background: transparent;
+}}
+QPushButton#WinBtn, QPushButton#WinBtnClose {{
+    background: transparent;
+    border: none;
+    border-radius: 8px;
+    padding: 0;
+    color: {TEXT_SECONDARY};
+    font-size: 13px;
+}}
+QPushButton#WinBtn:hover {{
+    background: {ACCENT_SOFT};
+    color: {ACCENT_HOVER};
+}}
+QPushButton#WinBtnClose:hover {{
+    background: #E5484D;
+    color: white;
 }}
 QLabel {{
     background: transparent;

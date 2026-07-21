@@ -433,6 +433,14 @@ class TranslateApp(QApplication):
 
     def show_main_window(self) -> None:
         self.window.show()
+        if self.window.isMinimized():
+            # 最小化状态下 show() 不会还原（窗口还在任务栏里躺着）；
+            # 用位运算去掉 Minimized，最大化过的窗口还原后仍是最大化
+            from PySide6.QtCore import Qt
+
+            self.window.setWindowState(
+                (self.window.windowState() & ~Qt.WindowMinimized) | Qt.WindowActive
+            )
         self.window.raise_()
         self.window.activateWindow()
 
