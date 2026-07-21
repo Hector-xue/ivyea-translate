@@ -1,23 +1,32 @@
-"""自绘标题栏 + 无边框窗口支持。
+"""无边框窗口外壳：自绘标题栏 + 圆角卡片式窗体 + 自绘投影 + 四边缩放。
 
-系统标题栏是一条白色横条，和窗口内的浅绿渐变割裂，而且下面还要再画一行应用
-标题，同一件事占两行。这里把窗口改成无边框、自己画标题栏，整扇窗从上到下只有
-一层渐变。
+系统标题栏是一条白色横条，和窗口内的渐变割裂；但只把它去掉又会走到另一个极端
+——窗口变成一块直角的色块"贴"在屏幕上，没有边界也没有层次。所以窗体本身要当
+一张卡片来画：
+
+    MainWindow（透明）
+      └ Root（透明，四周留 SHADOW_MARGIN 作投影与抓边带）
+          └ Shell（圆角 + 描边 + 渐变，真正看得见的那扇窗）
+
+投影是自己画的，不用 QGraphicsDropShadowEffect：那个 effect 会把整棵子树先渲染
+到离屏 pixmap 再模糊，主窗口这种一直在输入/流式刷新的界面会明显掉帧。这里用一圈
+逐层变淡的圆角描边近似高斯投影，纯 2D 绘制，几乎零成本。
 
 拖动/缩放一律走 Qt 的 startSystemMove() / startSystemResize()（交给窗口管理器），
-而不是像 popup.py 那样自己算 mouseMove：系统级拖动在 Windows 上自带贴边分屏
-（Aero Snap）、双击标题栏最大化、多屏 DPI 切换，这些手写版本都做不对。
-两个 API 万一在某个平台返回 False，再退回手写拖动兜底。
+系统级拖动在 Windows 上自带贴边分屏、双击最大化、多屏 DPI 正确缩放，手写版本这些
+都做不对。四条边的抓边带就是那圈投影留白：那里没有任何子控件，鼠标事件必定落到
+窗口自己身上，所以上下左右四个方向都能拖（v0.22.0 只能左右拖，就是因为上边被标题
+栏、下边被内容区吃掉了事件）。
 
-macOS 不走无边框：红绿灯按钮是 Mac 用户的肌肉记忆，去掉反而更别扭，那边保留
-原生窗口，标题栏只当头部横幅（不画最小化/最大化/关闭）。
+macOS 不走无边框：红绿灯按钮是 Mac 用户的肌肉记忆，去掉反而更别扭，那边保留原生
+窗口，标题栏只当头部横幅（不画最小化/最大化/关闭）。
 """
 from __future__ import annotations
 
 import sys
 
-from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QFont
+from PySide6.QtCore import QEvent, QPoint, QRectF, Qt
+from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
 from . import theme
@@ -25,47 +34,26 @@ from . import theme
 MACOS = sys.platform == "darwin"
 WINDOWS = sys.platform == "win32"
 
-TITLEBAR_HEIGHT = 40
-RESIZE_BAND = 8  # 距窗口边缘多少像素内算"抓边缩放"
+TITLEBAR_HEIGHT = 38
+SHADOW_MARGIN = 12   # 窗体四周留给投影的透明留白（同时是抓边缩放带）
+SHADOW_OFFSET = 3    # 投影下沉，模拟光从上方来
+RESIZE_BAND = SHADOW_MARGIN + 4
 
 
 def apply_frameless(win) -> bool:
-    """把窗口设成无边框；返回是否真的生效（macOS 上不改，返回 False）。"""
+    """把窗口设成无边框 + 透明底（窗体圆角与投影由我们自己画）。
+
+    返回是否生效；macOS 保留原生窗口，返回 False。
+    """
     if MACOS:
         return False
     win.setWindowFlags(win.windowFlags() | Qt.FramelessWindowHint)
+    win.setAttribute(Qt.WA_TranslucentBackground)
     return True
 
 
-def polish_windows_frame(win) -> None:
-    """Windows 无边框窗口找回圆角与系统投影（Win11 有效，其余静默降级）。"""
-    if not WINDOWS:
-        return
-    try:
-        import ctypes
-        from ctypes import wintypes
-
-        hwnd = int(win.winId())
-        dwm = ctypes.windll.dwmapi
-        # DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2（Win11 圆角）
-        pref = ctypes.c_int(2)
-        dwm.DwmSetWindowAttribute(
-            wintypes.HWND(hwnd), ctypes.c_int(33), ctypes.byref(pref), ctypes.sizeof(pref)
-        )
-
-        # 把 1px 的窗框"延伸"进客户区 -> 系统给无边框窗口重新画上投影
-        class MARGINS(ctypes.Structure):
-            _fields_ = [("cxLeftWidth", ctypes.c_int), ("cxRightWidth", ctypes.c_int),
-                        ("cyTopHeight", ctypes.c_int), ("cyBottomHeight", ctypes.c_int)]
-
-        margins = MARGINS(1, 1, 1, 1)
-        dwm.DwmExtendFrameIntoClientArea(wintypes.HWND(hwnd), ctypes.byref(margins))
-    except Exception:  # noqa: BLE001 —— 纯装饰，任何失败都不该影响窗口可用
-        pass
-
-
 class TitleBar(QWidget):
-    """应用头部 = 标题栏：logo + 标题 + 状态 + 窗口按钮，整行可拖动。"""
+    """应用头部 = 标题栏：品牌字标 + 状态 + 窗口按钮，整行可拖动。"""
 
     def __init__(self, title: str, with_buttons: bool = True, parent=None):
         super().__init__(parent)
@@ -74,8 +62,8 @@ class TitleBar(QWidget):
         self._drag_offset: QPoint | None = None
 
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(14, 0, 6 if with_buttons else 14, 0)
-        lay.setSpacing(8)
+        lay.setContentsMargins(16, 0, 8 if with_buttons else 16, 0)
+        lay.setSpacing(9)
 
         dot = QLabel()
         logo = theme.asset_path("logo.png")
@@ -83,18 +71,21 @@ class TitleBar(QWidget):
             from PySide6.QtGui import QPixmap
 
             dot.setPixmap(QPixmap(logo).scaled(
-                20, 20, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                18, 18, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         else:
             dot.setText("●")
-            dot.setStyleSheet(f"color: {theme.ACCENT}; font-size: 14px;")
+            dot.setStyleSheet(f"color: {theme.ACCENT}; font-size: 13px;")
         lay.addWidget(dot)
 
-        label = QLabel(title)
+        # 字标只留品牌名：副标题"随手即译"在标题栏里是噪音，挪到不占位的窗口标题
+        name = QLabel(title)
+        name.setObjectName("Wordmark")
         f = QFont()
-        f.setPointSize(12)
+        f.setPointSize(10)
         f.setBold(True)
-        label.setFont(f)
-        lay.addWidget(label)
+        f.setLetterSpacing(QFont.PercentageSpacing, 102)
+        name.setFont(f)
+        lay.addWidget(name)
         lay.addStretch(1)
 
         self.status = QLabel("")
@@ -103,10 +94,10 @@ class TitleBar(QWidget):
 
         self.min_btn = self.max_btn = self.close_btn = None
         if with_buttons:
-            lay.addSpacing(4)
-            self.min_btn = self._win_button("─", "最小化")       # ─
+            lay.addSpacing(2)
+            self.min_btn = self._win_button("–", "最小化")            # –
             self.min_btn.clicked.connect(lambda: self.window().showMinimized())
-            self.max_btn = self._win_button("□", "最大化")       # □
+            self.max_btn = self._win_button("□", "最大化")            # □
             self.max_btn.clicked.connect(self.toggle_max_restore)
             self.close_btn = self._win_button("✕", "关闭（隐藏到托盘）")  # ✕
             self.close_btn.setObjectName("WinBtnClose")
@@ -117,7 +108,7 @@ class TitleBar(QWidget):
     def _win_button(self, glyph: str, tip: str) -> QPushButton:
         btn = QPushButton(glyph, self)
         btn.setObjectName("WinBtn")
-        btn.setFixedSize(38, 28)
+        btn.setFixedSize(30, 26)
         btn.setToolTip(tip)
         btn.setFocusPolicy(Qt.NoFocus)
         btn.setCursor(Qt.ArrowCursor)
@@ -165,14 +156,41 @@ class TitleBar(QWidget):
             self.toggle_max_restore()
 
 
-class FramelessResizeMixin:
-    """无边框窗口的边缘缩放：贴边 8px 内按下即交给窗口管理器缩放。
-
-    背景区域（Root 那层）不消费鼠标事件，会冒泡到窗口本身，所以这里只在
-    窗口级别处理即可；卡片/输入框上的点击不受影响。
-    """
+class ShellWindowMixin:
+    """无边框窗口的窗体绘制（圆角投影）与四边缩放。"""
 
     _frameless: bool = False
+
+    # ---- 投影 ----
+
+    def _shell_margin(self) -> int:
+        return 0 if (not self._frameless or self.isMaximized()) else SHADOW_MARGIN
+
+    def paintEvent(self, event):
+        margin = self._shell_margin()
+        if not margin:
+            return super().paintEvent(event)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setBrush(Qt.NoBrush)
+        radius = theme.WINDOW_RADIUS
+        # 一圈逐层变淡的圆角描边 ≈ 高斯投影：越往外越透明，整体下沉 SHADOW_OFFSET
+        for i in range(margin, 0, -1):
+            t = i / margin                       # 1 = 最外圈
+            alpha = int(theme.SHADOW_ALPHA * (1.0 - t) ** 2.2)
+            if alpha <= 0:
+                continue
+            p.setPen(QPen(QColor(*theme.SHADOW_RGB, alpha), 1))
+            rect = QRectF(
+                margin - i + 0.5,
+                margin - i + SHADOW_OFFSET + 0.5,
+                self.width() - 2 * (margin - i) - 1,
+                self.height() - 2 * (margin - i) - SHADOW_OFFSET - 1,
+            )
+            p.drawRoundedRect(rect, radius + i * 0.6, radius + i * 0.6)
+        p.end()
+
+    # ---- 四边缩放 ----
 
     def _edge_at(self, pos) -> Qt.Edges:
         if not self._frameless or self.isMaximized():
@@ -219,11 +237,27 @@ class FramelessResizeMixin:
             self.unsetCursor()
         super().leaveEvent(event)
 
+    # ---- 最大化时收掉投影留白与圆角 ----
+
     def changeEvent(self, event):
         super().changeEvent(event)
-        from PySide6.QtCore import QEvent
-
         if event.type() == QEvent.WindowStateChange:
-            bar = getattr(self, "titlebar", None)
-            if bar is not None:
-                bar.sync_max_glyph()
+            self._sync_shell_state()
+
+    def _sync_shell_state(self) -> None:
+        bar = getattr(self, "titlebar", None)
+        if bar is not None:
+            bar.sync_max_glyph()
+        shell = getattr(self, "shell", None)
+        root_lay = getattr(self, "_root_layout", None)
+        if shell is None or root_lay is None:
+            return
+        margin = self._shell_margin()
+        root_lay.setContentsMargins(margin, margin, margin, margin)
+        # 最大化时窗体贴满屏幕，圆角会在四角露出桌面 -> 切成直角。
+        # 这里用内联样式而不是 QSS 属性选择器（[maximized="true"]）：动态属性在
+        # PySide6 里回读不稳，实测选择器不命中，圆角切不掉。
+        shell.setStyleSheet(
+            "QWidget#Shell { border-radius: 0; border: none; }" if not margin else ""
+        )
+        self.update()

@@ -30,7 +30,7 @@ from ..config import Config, LANGUAGES, PROVIDER_PRESETS, STYLES
 from ..llm import LLMError, client_from_config
 from ..translator import TranslateWorker
 from . import theme
-from .titlebar import FramelessResizeMixin, TitleBar, apply_frameless, polish_windows_frame
+from .titlebar import ShellWindowMixin, TitleBar, apply_frameless
 from .widgets import AutoGrowTextEdit
 
 
@@ -160,7 +160,7 @@ class _HistoryRow(QWidget):
         self.activated.emit()
 
 
-class MainWindow(FramelessResizeMixin, QMainWindow):
+class MainWindow(ShellWindowMixin, QMainWindow):
     settings_saved = Signal()
     # 测试连接在后台线程跑，结果必须经信号回主线程；
     # 之前用 QTimer.singleShot(0,...) 在非 Qt 线程启动定时器，回调永不执行，
@@ -177,12 +177,10 @@ class MainWindow(FramelessResizeMixin, QMainWindow):
         self._history_path = cfg.path.parent / "history.json"
         self._history: List[dict] = self._load_history()
 
-        self.setWindowTitle("Ivyea Translate")
-        self.resize(820, 780)
-        self.setMinimumSize(520, 420)  # 允许自由缩小；设置页有滚动容器兜底
+        self.setWindowTitle("Ivyea Translate · 随手即译")
         self._test_finished.connect(self._show_test_result)
 
-        # 无边框：系统白色标题栏去掉，自绘标题栏与窗口共用一层渐变
+        # 无边框 + 透明底：系统白色标题栏去掉，窗体圆角与投影由 ShellWindowMixin 自绘
         self._frameless = apply_frameless(self)
         if self._frameless:
             self.setMouseTracking(True)  # 贴边时光标变缩放箭头
@@ -191,20 +189,31 @@ class MainWindow(FramelessResizeMixin, QMainWindow):
         root.setObjectName("Root")
         root.setMouseTracking(True)
         self.setCentralWidget(root)
-        outer = QVBoxLayout(root)
-        outer.setContentsMargins(0, 0, 0, 0)
+        self._root_layout = QVBoxLayout(root)
+        margin = self._shell_margin()
+        self._root_layout.setContentsMargins(margin, margin, margin, margin)
+        self._root_layout.setSpacing(0)
+
+        # Shell = 看得见的那扇窗（圆角 + 描边 + 渐变），内容全挂在它上面
+        self.shell = QWidget()
+        self.shell.setObjectName("Shell")
+        self.shell.setAttribute(Qt.WA_StyledBackground, True)
+        self.shell.setMouseTracking(True)
+        self._root_layout.addWidget(self.shell)
+        outer = QVBoxLayout(self.shell)
+        outer.setContentsMargins(0, 6, 0, 0)
         outer.setSpacing(0)
 
         # 标题栏即应用头部（Mac 上保留原生红绿灯，这里只当横幅不画窗口按钮）
-        self.titlebar = TitleBar("Ivyea Translate · 随手即译", with_buttons=self._frameless, parent=self)
+        self.titlebar = TitleBar("Ivyea Translate", with_buttons=self._frameless, parent=self.shell)
         self.head_status = self.titlebar.status  # 兼容旧引用
         outer.addWidget(self.titlebar)
 
         body = QWidget()
         body.setMouseTracking(True)
         body_lay = QVBoxLayout(body)
-        body_lay.setContentsMargins(14, 0, 14, 12)
-        body_lay.setSpacing(6)
+        body_lay.setContentsMargins(16, 2, 16, 14)
+        body_lay.setSpacing(8)
         outer.addWidget(body, 1)
 
         self.tabs = QTabWidget()
@@ -213,6 +222,10 @@ class MainWindow(FramelessResizeMixin, QMainWindow):
         self.tabs.addTab(self._build_history_tab(), "历史")
         self.tabs.addTab(self._build_settings_tab(), "设置")
         body_lay.addWidget(self.tabs, 1)
+
+        # 默认高度按"翻译页正好装下两张卡"给，之前 780 高多出一大片空底
+        self.resize(760, 620)
+        self.setMinimumSize(460, 430)  # 允许自由缩小；各页有滚动容器兜底
 
     # ================= 翻译页 =================
 
@@ -290,14 +303,15 @@ class MainWindow(FramelessResizeMixin, QMainWindow):
         self.copy_result_btn.clicked.connect(self._copy_result)
         res_head.addWidget(self.copy_result_btn)
         res_lay.addLayout(res_head)
-        self.result_view = AutoGrowTextEdit(min_height=160)
+        self.result_view = AutoGrowTextEdit(min_height=140)
         self.result_view.setReadOnly(True)
         self.result_view.setPlaceholderText("译文会出现在这里")
-        res_lay.addWidget(self.result_view)
+        # 译文区跟着窗口长：否则窗口高度一大，底下就空出一整片没人用的留白
+        self.result_view.set_free()
+        res_lay.addWidget(self.result_view, 1)
 
         lay.addWidget(card)
-        lay.addWidget(result_card)
-        lay.addStretch(1)  # 内容不足一屏时两张卡贴顶，不被拉长
+        lay.addWidget(result_card, 1)
 
         self.source_edit.installEventFilter(self)
         # 源文被清空时译文一起清掉，不再残留上一条结果（译文只读，用户手删不掉）
@@ -533,7 +547,8 @@ class MainWindow(FramelessResizeMixin, QMainWindow):
         self.email_body = AutoGrowTextEdit(min_height=140)
         self.email_body.setReadOnly(True)
         self.email_body.setPlaceholderText("生成的地道外语会出现在这里")
-        res_lay.addWidget(self.email_body)
+        self.email_body.set_free()  # 正文跟着窗口长，底部不留死白
+        res_lay.addWidget(self.email_body, 1)
 
         # 回译校对：把生成结果译回母语，确认意思没跑偏
         self.email_backtrans_label = QLabel("回译校对")
@@ -546,8 +561,7 @@ class MainWindow(FramelessResizeMixin, QMainWindow):
         res_lay.addWidget(self.email_backtrans)
 
         lay.addWidget(card)
-        lay.addWidget(result_card)
-        lay.addStretch(1)
+        lay.addWidget(result_card, 1)
         self._on_scenario_changed()
         return _scrollable(page)
 
@@ -1076,11 +1090,7 @@ class MainWindow(FramelessResizeMixin, QMainWindow):
 
     def showEvent(self, event):
         super().showEvent(event)
-        # 圆角/投影要拿到真实窗口句柄才能设，show 之后才有；只做一次
-        if self._frameless and not getattr(self, "_frame_polished", False):
-            self._frame_polished = True
-            polish_windows_frame(self)
-        self.titlebar.sync_max_glyph()
+        self._sync_shell_state()  # 最大化状态下显示时收掉投影留白与圆角
 
     # 关窗只是隐藏（常驻托盘）；退出流程中必须放行
     def closeEvent(self, event):

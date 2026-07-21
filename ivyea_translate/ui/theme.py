@@ -1,23 +1,45 @@
-"""设计令牌 + 全局 QSS：粉彩渐变、玻璃卡、大圆角、珊瑚点缀（对标参考图）。"""
+"""设计令牌 + 全局 QSS。
+
+设计取向对标 Linear / Raycast / Notion 这类桌面工具：**中性底色 + 白色卡片 +
+一处克制的品牌绿**。老版本把整扇窗铺成饱和的绿渐变、卡片又是半透明白，导致底与
+卡几乎同色，什么都糊在一起、没有层次；现在底色收成近中性的暖白（只在角落留一点
+品牌绿的呼吸感），卡片改纯白 + 细描边，输入框反过来做成"凹陷"的浅灰绿，
+层级立刻分明：底 < 卡 < 控件。
+"""
 from __future__ import annotations
 
 from pathlib import Path
 
-# ---- 设计令牌（取自品牌 logo 的叶绿色系） ----
-BG_GRADIENT = (
-    "qlineargradient(x1:0, y1:0, x2:1, y2:1, "
-    "stop:0 #E9F4DF, stop:0.45 #FAFDF5, stop:1 #DEEFD2)"
+# ---- 设计令牌（品牌绿来自 logo，其余为中性梯度） ----
+# 窗体底：近中性暖白，右下角带一点点品牌绿，避免死白也不抢卡片
+SHELL_GRADIENT = (
+    "qlineargradient(x1:0, y1:0, x2:0.7, y2:1, "
+    "stop:0 #FCFDFA, stop:0.55 #F7FAF3, stop:1 #EFF5E7)"
 )
-GLASS_CARD = "rgba(255, 255, 255, 0.62)"
-GLASS_BORDER = "rgba(255, 255, 255, 0.85)"
-POPUP_BG = "rgba(255, 255, 255, 0.96)"
+BG_GRADIENT = SHELL_GRADIENT  # 兼容旧引用
+CARD_BG = "#FFFFFF"
+CARD_BORDER = "#E7EEDF"
+FIELD_BG = "#F7F9F4"        # 输入类控件比卡片更"凹"一层
+FIELD_BORDER = "#E4EBDB"
+FIELD_BG_FOCUS = "#FFFFFF"
+GLASS_CARD = CARD_BG        # 兼容旧引用
+GLASS_BORDER = CARD_BORDER
+POPUP_BG = "rgba(255, 255, 255, 0.98)"
 ACCENT = "#6BA53F"          # logo 主绿
 ACCENT_HOVER = "#5B9334"
-ACCENT_SOFT = "rgba(107, 165, 63, 0.14)"
-TEXT_PRIMARY = "#3C4A34"    # 深叶绿灰
-TEXT_SECONDARY = "#93A388"
-RADIUS = 18
-RADIUS_SM = 12
+ACCENT_SOFT = "rgba(107, 165, 63, 0.12)"
+ACCENT_RING = "rgba(107, 165, 63, 0.22)"
+TEXT_PRIMARY = "#2F3B29"    # 深叶绿灰
+TEXT_SECONDARY = "#8A9682"
+TEXT_MUTED = "#A9B3A2"
+DANGER = "#E5484D"
+OK = "#3AA675"
+
+WINDOW_RADIUS = 14          # 窗体圆角（自绘外壳）
+RADIUS = 14                 # 卡片
+RADIUS_SM = 10              # 控件
+SHADOW_RGB = (46, 66, 36)   # 投影颜色（带一点绿，融进品牌）
+SHADOW_ALPHA = 52           # 最内圈描边透明度上限
 # 输入框/下拉框内文字距控件左边缘的距离（12px padding + 1px 边框）：
 # 控件下方的说明文字按这个值内缩，才会和控件里的文字左对齐
 FIELD_TEXT_INSET = 13
@@ -65,17 +87,25 @@ def app_qss() -> str:
     font-family: {FONT_FAMILY};
     color: {TEXT_PRIMARY};
 }}
+/* 窗口本体透明：看得见的那扇窗是 Shell（自绘外壳负责投影） */
 QMainWindow, QWidget#Root {{
-    background: {BG_GRADIENT};
+    background: transparent;
 }}
+QWidget#Shell {{
+    background: {SHELL_GRADIENT};
+    border: 1px solid rgba(255, 255, 255, 0.9);
+    border-radius: {WINDOW_RADIUS}px;
+}}
+/* ---- 卡片 ---- */
 QWidget#GlassCard {{
-    background: {GLASS_CARD};
-    border: 1px solid {GLASS_BORDER};
+    background: {CARD_BG};
+    border: 1px solid {CARD_BORDER};
     border-radius: {RADIUS}px;
 }}
 QLabel#CardTitle {{
-    font-size: 15px;
+    font-size: 13px;
     font-weight: 600;
+    color: {TEXT_PRIMARY};
     background: transparent;
 }}
 QLabel#Hint {{
@@ -90,87 +120,115 @@ QLabel#FieldHint {{
     background: transparent;
     padding-left: {FIELD_TEXT_INSET}px;
 }}
-/* 自绘标题栏：与窗口共用同一层渐变，不画任何底色/分隔线 */
+QLabel {{
+    background: transparent;
+    font-size: 13px;
+}}
+/* ---- 标题栏 ---- */
 QWidget#TitleBar {{
+    background: transparent;
+}}
+QLabel#Wordmark {{
+    color: {TEXT_PRIMARY};
     background: transparent;
 }}
 QPushButton#WinBtn, QPushButton#WinBtnClose {{
     background: transparent;
     border: none;
-    border-radius: 8px;
+    border-radius: 7px;
     padding: 0;
     color: {TEXT_SECONDARY};
     font-size: 13px;
 }}
 QPushButton#WinBtn:hover {{
-    background: {ACCENT_SOFT};
-    color: {ACCENT_HOVER};
+    background: rgba(47, 59, 41, 0.07);
+    color: {TEXT_PRIMARY};
 }}
 QPushButton#WinBtnClose:hover {{
-    background: #E5484D;
+    background: {DANGER};
     color: white;
 }}
-QLabel {{
-    background: transparent;
-}}
+/* ---- 输入类：比卡片更"凹"一层，聚焦时提亮 + 品牌绿描边 ---- */
 QPlainTextEdit, QTextEdit, QLineEdit {{
-    background: rgba(255, 255, 255, 0.75);
-    border: 1px solid rgba(255, 255, 255, 0.9);
+    background: {FIELD_BG};
+    border: 1px solid {FIELD_BORDER};
     border-radius: {RADIUS_SM}px;
-    padding: 8px 12px;
+    padding: 9px 12px;
     font-size: 14px;
     selection-background-color: {ACCENT};
     selection-color: white;
 }}
 QLineEdit {{
-    min-height: 24px;  /* 防止高分屏/全屏下输入框塌矮裁字 */
+    min-height: 22px;  /* 防止高分屏/全屏下输入框塌矮裁字 */
 }}
 QPlainTextEdit:focus, QTextEdit:focus, QLineEdit:focus {{
+    background: {FIELD_BG_FOCUS};
     border: 1px solid {ACCENT};
 }}
+QPlainTextEdit:hover, QTextEdit:hover, QLineEdit:hover {{
+    border-color: #D6E2C9;
+}}
+/* ---- 按钮 ---- */
 QPushButton {{
-    background: rgba(255, 255, 255, 0.7);
-    border: 1px solid rgba(255, 255, 255, 0.9);
+    background: {CARD_BG};
+    border: 1px solid {CARD_BORDER};
     border-radius: {RADIUS_SM}px;
-    padding: 8px 18px;
+    padding: 8px 16px;
     font-size: 13px;
+    color: {TEXT_PRIMARY};
 }}
 QPushButton:hover {{
-    background: rgba(255, 255, 255, 0.95);
-    border-color: {ACCENT};
+    background: #FBFDF8;
+    border-color: #CFDFC0;
+}}
+QPushButton:pressed {{
+    background: #F2F6EC;
 }}
 QPushButton#Primary {{
     background: {ACCENT};
     color: white;
-    border: none;
+    border: 1px solid {ACCENT};
     font-weight: 600;
+    padding: 8px 20px;
 }}
 QPushButton#Primary:hover {{
     background: {ACCENT_HOVER};
+    border-color: {ACCENT_HOVER};
+}}
+QPushButton#Primary:pressed {{
+    background: #4F812C;
 }}
 QPushButton#Primary:disabled {{
-    background: rgba(244, 132, 95, 0.45);
-    color: rgba(255, 255, 255, 0.85);
+    background: #BFD6AB;
+    border-color: #BFD6AB;
+    color: rgba(255, 255, 255, 0.9);
 }}
 QPushButton#Ghost {{
     background: transparent;
     border: none;
     color: {TEXT_SECONDARY};
-    padding: 4px 8px;
+    padding: 5px 9px;
+    border-radius: 8px;
 }}
 QPushButton#Ghost:hover {{
-    color: {ACCENT};
+    background: {ACCENT_SOFT};
+    color: {ACCENT_HOVER};
 }}
+/* ---- 下拉框 ---- */
 QComboBox {{
-    background: rgba(255, 255, 255, 0.75);
-    border: 1px solid rgba(255, 255, 255, 0.9);
+    background: {FIELD_BG};
+    border: 1px solid {FIELD_BORDER};
     border-radius: {RADIUS_SM}px;
     padding: 6px 12px;
     font-size: 13px;
     min-height: 22px;
 }}
 QComboBox:hover {{
+    border-color: #D6E2C9;
+}}
+QComboBox:focus, QComboBox:on {{
     border-color: {ACCENT};
+    background: {FIELD_BG_FOCUS};
 }}
 QComboBox::drop-down {{
     border: none;
@@ -184,17 +242,17 @@ QComboBox::down-arrow {{
 }}
 QComboBox QAbstractItemView {{
     background: #FFFFFF;
-    border: 1px solid rgba(107, 165, 63, 0.22);
+    border: 1px solid {CARD_BORDER};
     border-radius: {RADIUS_SM}px;
-    padding: 6px;
+    padding: 5px;
     selection-background-color: transparent;
     outline: none;
 }}
 QComboBox QAbstractItemView::item {{
-    min-height: 30px;
-    padding: 6px 12px;
+    min-height: 28px;
+    padding: 5px 10px;
     margin: 1px 2px;
-    border-radius: 8px;
+    border-radius: 7px;
     color: {TEXT_PRIMARY};
 }}
 QComboBox QAbstractItemView::item:hover {{
@@ -211,28 +269,32 @@ QCheckBox {{
     background: transparent;
 }}
 QCheckBox::indicator {{
-    width: 18px;
-    height: 18px;
-    border-radius: 6px;
-    border: 1px solid {TEXT_SECONDARY};
-    background: rgba(255, 255, 255, 0.8);
+    width: 17px;
+    height: 17px;
+    border-radius: 5px;
+    border: 1px solid #C7D2BC;
+    background: #FFFFFF;
+}}
+QCheckBox::indicator:hover {{
+    border-color: {ACCENT};
 }}
 QCheckBox::indicator:checked {{
     background: {ACCENT};
     border-color: {ACCENT};
 }}
+/* ---- 滚动条：细、悬停才明显 ---- */
 QScrollBar:vertical {{
     background: transparent;
-    width: 8px;
+    width: 10px;
     margin: 2px;
 }}
 QScrollBar::handle:vertical {{
-    background: rgba(154, 154, 181, 0.45);
+    background: rgba(47, 59, 41, 0.16);
     border-radius: 4px;
-    min-height: 30px;
+    min-height: 32px;
 }}
 QScrollBar::handle:vertical:hover {{
-    background: {ACCENT};
+    background: rgba(47, 59, 41, 0.3);
 }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
     height: 0;
@@ -240,29 +302,42 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
     background: transparent;
 }}
-QTabBar::tab {{
-    background: transparent;
-    color: {TEXT_SECONDARY};
-    padding: 8px 18px;
-    font-size: 14px;
-    border: none;
-}}
-QTabBar::tab:selected {{
-    color: {ACCENT};
-    font-weight: 600;
-    border-bottom: 2px solid {ACCENT};
-}}
+/* ---- 页签：分段控件（选中项是一枚白色药丸） ---- */
 QTabWidget::pane {{
     border: none;
     background: transparent;
 }}
+QTabBar {{
+    background: transparent;
+    qproperty-drawBase: 0;
+}}
+QTabBar::tab {{
+    background: transparent;
+    color: {TEXT_SECONDARY};
+    padding: 6px 16px;
+    margin-right: 4px;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    font-size: 13px;
+}}
+QTabBar::tab:hover {{
+    background: rgba(47, 59, 41, 0.05);
+    color: {TEXT_PRIMARY};
+}}
+QTabBar::tab:selected {{
+    background: {CARD_BG};
+    border: 1px solid {CARD_BORDER};
+    color: {ACCENT};
+    font-weight: 600;
+}}
+/* ---- 历史列表 ---- */
 QListWidget {{
     background: transparent;
     border: none;
     outline: none;
 }}
 QListWidget::item {{
-    background: rgba(255, 255, 255, 0.55);
+    background: {CARD_BG};
     border-radius: {RADIUS_SM}px;
     padding: 10px 12px;
     margin: 4px 2px;
@@ -281,22 +356,22 @@ QListWidget#HistList::item {{
     color: {TEXT_SECONDARY};
 }}
 QWidget#HistRow {{
-    background: rgba(255, 255, 255, 0.66);
-    border: 1px solid rgba(255, 255, 255, 0.85);
-    border-radius: 14px;
+    background: {CARD_BG};
+    border: 1px solid {CARD_BORDER};
+    border-radius: {RADIUS_SM}px;
 }}
 QWidget#HistRow:hover {{
-    background: rgba(255, 255, 255, 0.92);
-    border: 1px solid {ACCENT};
+    border-color: {ACCENT};
+    background: #FCFEF9;
 }}
-QLabel#HistMeta {{ color: {TEXT_SECONDARY}; font-size: 11px; }}
+QLabel#HistMeta {{ color: {TEXT_MUTED}; font-size: 11px; }}
 QLabel#HistSrc {{ color: {TEXT_SECONDARY}; font-size: 13px; }}
 QLabel#HistRes {{ color: {TEXT_PRIMARY}; font-size: 14px; font-weight: 500; }}
 QToolTip {{
     background: white;
     color: {TEXT_PRIMARY};
-    border: 1px solid rgba(0, 0, 0, 0.08);
-    border-radius: 6px;
+    border: 1px solid {CARD_BORDER};
+    border-radius: 7px;
     padding: 4px 8px;
 }}
 """

@@ -57,8 +57,12 @@ def test_max_button_toggles_and_syncs_glyph(qapp, tmp_path):
     assert not win.isMaximized()
 
 
-def test_edge_resize_band(qapp, tmp_path):
-    """贴边 8px 内识别为缩放边；中间区域不该被误判（否则点卡片就在缩放）。"""
+def test_edge_resize_band_covers_all_four_sides(qapp, tmp_path):
+    """四条边都要能抓。
+
+    v0.22.0 只能左右拖：上边被标题栏、下边被内容区把鼠标事件吃掉了。现在四周
+    留出投影带（那里没有子控件），上下左右必须都判定为缩放边。
+    """
     from PySide6.QtCore import QPoint
 
     win = _make_window(qapp, tmp_path)
@@ -67,8 +71,60 @@ def test_edge_resize_band(qapp, tmp_path):
         pytest.skip("原生窗口由系统负责缩放")
     assert win._edge_at(QPoint(2, 300)) == Qt.LeftEdge
     assert win._edge_at(QPoint(798, 300)) == Qt.RightEdge
+    assert win._edge_at(QPoint(400, 2)) == Qt.TopEdge
+    assert win._edge_at(QPoint(400, 598)) == Qt.BottomEdge
     assert win._edge_at(QPoint(2, 2)) == (Qt.LeftEdge | Qt.TopEdge)
+    assert win._edge_at(QPoint(798, 598)) == (Qt.RightEdge | Qt.BottomEdge)
     assert not win._edge_at(QPoint(400, 300))  # 窗口中间：不是缩放边
+
+
+def test_titlebar_does_not_eat_top_resize_band(qapp, tmp_path):
+    """标题栏必须整体落在抓边带之下，否则窗口上边缘永远拖不动。"""
+    from ivyea_translate.ui import titlebar
+
+    win = _make_window(qapp, tmp_path)
+    if not win._frameless:
+        pytest.skip("原生窗口由系统负责缩放")
+    win.show()
+    qapp.processEvents()
+    top_of_titlebar = win.titlebar.mapTo(win, win.titlebar.rect().topLeft()).y()
+    assert top_of_titlebar > titlebar.RESIZE_BAND
+
+
+@pytest.mark.skipif(sys.platform == "darwin", reason="macOS 保留原生窗口（红绿灯）")
+def test_maximize_drops_shadow_margin_and_radius(qapp, tmp_path):
+    """最大化时投影留白与圆角必须收掉，否则四角会露出桌面、边上有透明条。"""
+    from ivyea_translate.ui import titlebar
+
+    win = _make_window(qapp, tmp_path)
+    win.show()
+    qapp.processEvents()
+    assert win._root_layout.contentsMargins().left() == titlebar.SHADOW_MARGIN
+    assert win.shell.styleSheet() == ""
+
+    win.showMaximized()
+    qapp.processEvents()
+    assert win._root_layout.contentsMargins().left() == 0
+    assert "border-radius: 0" in win.shell.styleSheet()
+
+    win.showNormal()
+    qapp.processEvents()
+    assert win._root_layout.contentsMargins().left() == titlebar.SHADOW_MARGIN
+    assert win.shell.styleSheet() == ""
+
+
+def test_result_view_grows_with_window(qapp, tmp_path):
+    """译文区跟着窗口长：窗口拉高后不该在底部留一片死白。"""
+    win = _make_window(qapp, tmp_path)
+    win.resize(760, 620)
+    win.show()
+    qapp.processEvents()
+    qapp.processEvents()
+    short = win.result_view.height()
+    win.resize(760, 900)
+    qapp.processEvents()
+    qapp.processEvents()
+    assert win.result_view.height() > short
 
 
 def test_settings_hints_align_with_field_text(qapp, tmp_path):
