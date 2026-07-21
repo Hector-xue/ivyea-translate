@@ -80,3 +80,32 @@ def test_translation_cache_lru_eviction():
     assert len(_CACHE) == _CACHE_MAX
     assert cache_get(("e", "en", "general", "t0")) is None       # 最早的被淘汰
     assert cache_get(("e", "en", "general", f"t{_CACHE_MAX+9}")) == f"r{_CACHE_MAX+9}"
+
+
+def test_worker_stops_promptly_after_cancel(qapp):
+    """退出时要能收干净后台线程：cancel 后线程必须自己结束。
+
+    否则 QThread 对象被回收时线程还在跑，Qt 直接 abort
+    （"QThread: Destroyed while thread is still running"）——正在流式翻译时
+    点退出就会踩到。
+    """
+    import time
+
+    from ivyea_translate.translator import TranslateWorker
+
+    class SlowStream:
+        is_free = False
+        base_url = "stub"
+        model = "stub"
+
+        def stream_chat(self, messages):
+            for i in range(200):
+                time.sleep(0.02)
+                yield f"片段{i}"
+
+    worker = TranslateWorker(SlowStream(), "hello", "zh-CN", "general")
+    worker.start()
+    time.sleep(0.15)
+    assert worker.isRunning()
+    worker.cancel()
+    assert worker.wait(2000), "cancel 后线程应在 2 秒内退出"

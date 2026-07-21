@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import sys
 import threading
+import time
 from typing import List, Optional
 
 log = logging.getLogger(__name__)
@@ -124,6 +125,11 @@ class TranslateApp(QApplication):
         self._overlay: Optional[CaptureOverlay] = None
         self._capture_mode = "popup"
         self._inplace: Optional[object] = None
+
+        # 退出前必须收干净后台翻译线程：QThread 对象被 Python 回收时若线程还在跑，
+        # Qt 会直接 abort（"QThread: Destroyed while thread is still running"）。
+        # 正在流式翻译时点退出就会踩到，Windows 上可能弹一次崩溃报告。
+        self.aboutToQuit.connect(self._shutdown_workers)
 
         self._setup_tray()
         ocr_engine.warmup_async()
@@ -511,6 +517,24 @@ class TranslateApp(QApplication):
         dlg.show()
 
     # ---------- 退出 ----------
+
+    def _shutdown_workers(self, timeout_ms: int = 1500) -> None:
+        """取消并等待所有后台翻译线程结束。
+
+        cancel() 只置标志位，线程要等当前这一片 SSE 读完才看得到；流式片段来得
+        很密，通常几十毫秒就退出。留一个总预算兜底：真卡在网络读上（对端不回包）
+        就不再干等，直接 terminate——反正下一步就是进程退出。
+        """
+        workers = [w for w in self._workers if w.isRunning()]
+        for w in workers:
+            w.cancel()
+        deadline = time.monotonic() + timeout_ms / 1000
+        for w in workers:
+            remaining = max(0, int((deadline - time.monotonic()) * 1000))
+            if not w.wait(remaining):
+                log.warning("翻译线程未在预算内退出，强制终止")
+                w.terminate()
+                w.wait(200)
 
     def request_quit(self) -> None:
         """唯一正确的退出入口：先放行主窗口的 close，再 quit。"""
