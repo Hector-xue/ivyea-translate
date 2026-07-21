@@ -27,10 +27,10 @@ from PySide6.QtWidgets import (
 )
 
 from . import theme
+from .widgets import MAX_SIZE, AutoGrowTextEdit
 
 Rect = Tuple[int, int, int, int]  # x, y, w, h
 
-MAX_SIZE = 16777215
 # 弹窗阴影留边（也是拖拽调整大小的抓取带）
 MARGIN_L, MARGIN_T, MARGIN_R, MARGIN_B = 20, 14, 20, 24
 RESIZE_GRAB = 12          # 距卡片边缘多少像素内算"抓边"
@@ -71,45 +71,13 @@ def compute_popup_pos(popup_w: int, popup_h: int, anchor: Rect, screen: Rect, ma
     )
 
 
-class _AutoGrowText(QTextEdit):
-    """只读文本区，随内容自动长高，超过 max_h 出滚动条；
-    用户手动调整弹窗大小后切换为自由伸展（set_free）。
-
-    用 QTextEdit 而非 QPlainTextEdit：后者的 document().size() 不反映
-    换行后的真实高度（永远约等于一行），会导致弹窗永远过矮。"""
+class _AutoGrowText(AutoGrowTextEdit):
+    """弹窗里的只读结果区：随内容长高，超过 max_h 自身出滚动条。"""
 
     def __init__(self, max_h: int = 460, parent=None):
-        super().__init__(parent)
+        super().__init__(min_height=60, max_height=max_h, parent=parent)
         self.setReadOnly(True)
         self.setFrameStyle(QFrame.NoFrame)
-        self.setWordWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._max_h = max_h
-        self._free = False
-        self.textChanged.connect(self._adjust_height)
-
-    def set_free(self) -> None:
-        self._free = True
-        self.setMinimumHeight(48)
-        self.setMaximumHeight(MAX_SIZE)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._adjust_height()  # 宽度变化后按新换行重算高度
-
-    def _adjust_height(self):
-        if self._free:
-            return
-        w = self.viewport().width()
-        if w <= 0:
-            return  # 尚未布局，show/resize 后会再触发
-        doc = self.document()
-        doc.setTextWidth(w)  # 关键：按实际宽度换行后再量高度，否则长文本被低估
-        target = max(60, min(int(doc.size().height()) + 14, self._max_h))
-        if self.height() != target:
-            self.setFixedHeight(target)
 
 
 class TranslationPopup(QWidget):

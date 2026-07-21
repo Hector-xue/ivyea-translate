@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
-    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QTabWidget,
@@ -32,6 +31,7 @@ from ..config import Config, LANGUAGES, PROVIDER_PRESETS, STYLES
 from ..llm import LLMError, client_from_config
 from ..translator import TranslateWorker
 from . import theme
+from .widgets import AutoGrowTextEdit
 
 
 class QComboBox(QComboBox):  # noqa: F811  —— 全模块下拉框统一为"悬停滚轮不改值"
@@ -58,20 +58,6 @@ def _glass_card() -> QWidget:
     card = QWidget()
     card.setObjectName("GlassCard")
     return card
-
-
-class _FlexText(QPlainTextEdit):
-    """高度完全交给布局 stretch 决定的文本框。
-
-    QPlainTextEdit 默认 sizeHint 高约 192px，与内容无关；结果区叠几个就把页面
-    顶得高于滚动视口，逼出滚动条并把下方的框推到折叠线以外。这里让 sizeHint
-    退回最小高度，剩余空间按 addWidget 的 stretch 分配。
-    """
-
-    def sizeHint(self):
-        hint = super().sizeHint()
-        hint.setHeight(self.minimumHeight() or hint.height())
-        return hint
 
 
 def _scrollable(inner: QWidget) -> QScrollArea:
@@ -237,10 +223,8 @@ class MainWindow(QMainWindow):
         opts.addStretch(1)
         card_lay.addLayout(opts)
 
-        self.source_edit = QPlainTextEdit()
+        self.source_edit = AutoGrowTextEdit(min_height=88)
         self.source_edit.setPlaceholderText("输入或粘贴要翻译的内容…（Ctrl+Enter 翻译）")
-        self.source_edit.setMinimumHeight(88)
-        self.source_edit.setMaximumHeight(180)  # 源文区不喧宾夺主，长文本内部滚动
         card_lay.addWidget(self.source_edit)
 
         btn_row = QHBoxLayout()
@@ -278,14 +262,14 @@ class MainWindow(QMainWindow):
         self.copy_result_btn.clicked.connect(self._copy_result)
         res_head.addWidget(self.copy_result_btn)
         res_lay.addLayout(res_head)
-        self.result_view = QPlainTextEdit()
+        self.result_view = AutoGrowTextEdit(min_height=160)
         self.result_view.setReadOnly(True)
-        self.result_view.setMinimumHeight(220)  # 译文区始终有足够高度浏览
         self.result_view.setPlaceholderText("译文会出现在这里")
-        res_lay.addWidget(self.result_view, 1)
+        res_lay.addWidget(self.result_view)
 
-        lay.addWidget(card)            # 源文区：紧凑
-        lay.addWidget(result_card, 1)  # 译文区：占据剩余空间
+        lay.addWidget(card)
+        lay.addWidget(result_card)
+        lay.addStretch(1)  # 内容不足一屏时两张卡贴顶，不被拉长
 
         self.source_edit.installEventFilter(self)
         # 源文被清空时译文一起清掉，不再残留上一条结果（译文只读，用户手删不掉）
@@ -467,9 +451,7 @@ class MainWindow(QMainWindow):
         self.email_hint.setWordWrap(True)
         card_lay.addWidget(self.email_hint)
 
-        self.email_source = _FlexText()
-        self.email_source.setMinimumHeight(100)
-        self.email_source.setMaximumHeight(180)  # 草稿区不喧宾夺主，长文本内部滚动
+        self.email_source = AutoGrowTextEdit(min_height=100)
         card_lay.addWidget(self.email_source)
 
         # 草稿清空时结果一起清掉（结果只读，用户手删不掉）
@@ -520,26 +502,24 @@ class MainWindow(QMainWindow):
         copy_body_btn.clicked.connect(lambda: self._copy_text(self.email_body.toPlainText()))
         body_head.addWidget(copy_body_btn)
         res_lay.addLayout(body_head)
-        self.email_body = _FlexText()
+        self.email_body = AutoGrowTextEdit(min_height=140)
         self.email_body.setReadOnly(True)
-        self.email_body.setMinimumHeight(140)  # 防止被主题/回译挤成一两行
         self.email_body.setPlaceholderText("生成的地道外语会出现在这里")
-        res_lay.addWidget(self.email_body, 3)
+        res_lay.addWidget(self.email_body)
 
         # 回译校对：把生成结果译回母语，确认意思没跑偏
         self.email_backtrans_label = QLabel("回译校对")
         self.email_backtrans_label.setObjectName("Hint")
         res_lay.addWidget(self.email_backtrans_label)
-        self.email_backtrans = _FlexText()
+        self.email_backtrans = AutoGrowTextEdit(min_height=110)
         self.email_backtrans.setReadOnly(True)
         self.email_backtrans.setPlaceholderText("生成后自动把结果译回母语，供你确认含义")
-        # 回译常常和正文一样长，96px 死高度浏览太别扭 → 给足最小高度并随窗口一起长
-        self.email_backtrans.setMinimumHeight(125)
         self.email_backtrans.setStyleSheet(f"color: {theme.TEXT_SECONDARY}; font-size: 13px;")
-        res_lay.addWidget(self.email_backtrans, 2)
+        res_lay.addWidget(self.email_backtrans)
 
-        lay.addWidget(card)            # 草稿区：紧凑
-        lay.addWidget(result_card, 1)  # 结果区：占据剩余空间
+        lay.addWidget(card)
+        lay.addWidget(result_card)
+        lay.addStretch(1)
         self._on_scenario_changed()
         return _scrollable(page)
 
