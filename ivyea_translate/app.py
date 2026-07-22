@@ -98,10 +98,12 @@ class TranslateApp(QApplication):
     def __init__(self, argv: List[str]):
         super().__init__(argv)
         self.setQuitOnLastWindowClosed(False)
+        # 配置要先读：全局 QSS 取决于用户选的主题
+        self.cfg = Config()
+        theme.apply(self.cfg.get("ui.theme", theme.DEFAULT_THEME))
         self.setStyleSheet(theme.app_qss())
         self.setWindowIcon(_make_icon())
 
-        self.cfg = Config()
         # 恢复上次命中的免费翻译端点，避免本次首译又从 DeepL 慢重试
         from .free_engine import free_engine
         free_engine.preferred = self.cfg.get("free_engine.preferred") or None

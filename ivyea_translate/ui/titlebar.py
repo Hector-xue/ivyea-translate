@@ -254,6 +254,10 @@ class ShellWindowMixin:
             return
         margin = self._shell_margin()
         root_lay.setContentsMargins(margin, margin, margin, margin)
+        backdrop = getattr(self, "backdrop", None)
+        if backdrop is not None:
+            # 最大化时窗体贴满屏幕、圆角切直角，背景照片的裁剪也要跟着切
+            backdrop.set_radius(theme.WINDOW_RADIUS if margin else 0)
         # 最大化时窗体贴满屏幕，圆角会在四角露出桌面 -> 切成直角。
         # 这里用内联样式而不是 QSS 属性选择器（[maximized="true"]）：动态属性在
         # PySide6 里回读不稳，实测选择器不命中，圆角切不掉。

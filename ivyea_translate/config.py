@@ -116,6 +116,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "ui": {
         "popup_width": 520,
         "history_limit": 100,
+        # 外观主题：ivy(常春藤) / patriot(爱国风) / starfield(星海) /
+        # sakura(樱花) / cyber(赛博) / alpine(雪山)
+        "theme": "ivy",
+        "theme_motion": True,     # 背景与横幅的动效（关掉只留静态实拍图，零 CPU）
+        "theme_banner": True,     # 标题栏下的主题横幅
     },
     "update": {
         "auto_check": True,

@@ -30,6 +30,8 @@ from ..config import Config, LANGUAGES, PROVIDER_PRESETS, STYLES
 from ..llm import LLMError, client_from_config
 from ..translator import TranslateWorker
 from . import theme
+from .backdrop import Backdrop
+from .hero import HeroBanner
 from .titlebar import ShellWindowMixin, TitleBar, apply_frameless
 from .widgets import AutoGrowTextEdit
 
@@ -134,6 +136,52 @@ class _ElideLabel(QLabel):
         return QSize(16, super().minimumSizeHint().height())
 
 
+class _ThemeChip(QWidget):
+    """设置页里的一枚主题卡：实拍底图缩略 + 主题名，点一下即时换肤。"""
+
+    picked = Signal(str)
+
+    def __init__(self, key: str, parent=None):
+        super().__init__(parent)
+        self.key = key
+        self.setObjectName("ThemeCard")
+        self.setAttribute(Qt.WA_StyledBackground, True)  # 否则 QSS 卡片背景不绘制
+        self.setCursor(Qt.PointingHandCursor)
+        v = QVBoxLayout(self)
+        v.setContentsMargins(6, 6, 6, 5)
+        v.setSpacing(4)
+        self.thumb = QLabel()
+        self.thumb.setFixedSize(128, 72)
+        self.thumb.setScaledContents(True)
+        self.thumb.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        path = theme.theme_asset("thumb.jpg", key)
+        if path:
+            from PySide6.QtGui import QPixmap
+
+            pm = QPixmap(path)
+            if not pm.isNull():
+                self.thumb.setPixmap(pm)
+        v.addWidget(self.thumb, 0, Qt.AlignHCenter)
+        self.name = QLabel(theme.theme_label(key))
+        self.name.setObjectName("ThemeName")
+        self.name.setAlignment(Qt.AlignCenter)
+        self.name.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        v.addWidget(self.name)
+
+    def set_selected(self, on: bool) -> None:
+        # 用 objectName 切换而不是动态属性：动态属性在 PySide6 里回读不稳，
+        # 属性选择器实测不命中（titlebar 里踩过同一个坑）
+        self.setObjectName("ThemeCardOn" if on else "ThemeCard")
+        self.name.setObjectName("ThemeNameOn" if on else "ThemeName")
+        for w in (self, self.name):
+            w.style().unpolish(w)
+            w.style().polish(w)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.picked.emit(self.key)
+
+
 class _HistoryRow(QWidget):
     """历史条目卡片：时间/语言（弱）+ 原文（弱）+ 译文（醒目），双击回填。"""
 
@@ -204,10 +252,21 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         outer.setContentsMargins(0, 6, 0, 0)
         outer.setSpacing(0)
 
+        # 主题背景层：实拍底图 + 动效，沉在 Shell 最底下、不吃鼠标事件
+        motion_on = bool(cfg.get("ui.theme_motion", True))
+        self.backdrop = Backdrop(self.shell, motion_enabled=motion_on)
+        self.backdrop.lower()
+
         # 标题栏即应用头部（Mac 上保留原生红绿灯，这里只当横幅不画窗口按钮）
         self.titlebar = TitleBar("Ivyea Translate", with_buttons=self._frameless, parent=self.shell)
         self.head_status = self.titlebar.status  # 兼容旧引用
         outer.addWidget(self.titlebar)
+
+        # 主题横幅（可收起）
+        self.hero = HeroBanner(self.shell, motion_enabled=motion_on)
+        self.hero.collapse_requested.connect(self._collapse_hero)
+        self.hero.setVisible(bool(cfg.get("ui.theme_banner", True)))
+        outer.addWidget(self.hero)
 
         body = QWidget()
         body.setMouseTracking(True)
@@ -810,6 +869,9 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         lay.setSpacing(10)
         scroll.setWidget(page)
 
+        # 外观主题卡（放最上面：换肤是一眼能看见效果的设置，藏在底下没意义）
+        lay.addWidget(self._build_theme_card())
+
         # 翻译引擎卡
         eng_card = _glass_card()
         ec = QVBoxLayout(eng_card)
@@ -977,6 +1039,95 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         lay.addStretch(1)
         return scroll
 
+    # ---------- 外观主题 ----------
+
+    def _build_theme_card(self) -> QWidget:
+        from PySide6.QtWidgets import QGridLayout
+
+        card = _glass_card()
+        v = QVBoxLayout(card)
+        v.setContentsMargins(16, 12, 16, 13)
+        v.setSpacing(9)
+        t = QLabel("外观主题")
+        t.setObjectName("CardTitle")
+        v.addWidget(t)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(8)
+        self._theme_chips = {}
+        active = theme.current()
+        for i, key in enumerate(theme.theme_keys()):
+            chip = _ThemeChip(key)
+            chip.picked.connect(self._on_theme_picked)
+            chip.set_selected(key == active)
+            self._theme_chips[key] = chip
+            grid.addWidget(chip, i // 3, i % 3)
+        grid.setColumnStretch(3, 1)  # 卡片靠左，右侧留白不被拉伸
+        v.addLayout(grid)
+
+        opts = QHBoxLayout()
+        self.motion_check = QCheckBox("启用动效")
+        self.motion_check.setToolTip("关掉后背景与横幅只保留静态实拍图，完全不占 CPU")
+        self.motion_check.setChecked(bool(self.cfg.get("ui.theme_motion", True)))
+        self.motion_check.toggled.connect(self._on_motion_toggled)
+        opts.addWidget(self.motion_check)
+        opts.addSpacing(16)
+        self.banner_check = QCheckBox("显示主题横幅")
+        self.banner_check.setChecked(bool(self.cfg.get("ui.theme_banner", True)))
+        self.banner_check.toggled.connect(self._on_banner_toggled)
+        opts.addWidget(self.banner_check)
+        opts.addStretch(1)
+        v.addLayout(opts)
+
+        tip = QLabel("背景与横幅均为公有领域 / CC0 实拍照片，逐张来源见 assets/themes/CREDITS.md")
+        tip.setObjectName("Hint")
+        tip.setWordWrap(True)
+        v.addWidget(tip)
+        return card
+
+    def _on_theme_picked(self, key: str) -> None:
+        if key == theme.current():
+            return
+        theme.apply(key)
+        self.cfg.set("ui.theme", key)
+        self.cfg.save()
+        from PySide6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if app is not None:
+            app.setStyleSheet(theme.app_qss())
+        self.restyle()
+
+    def _on_motion_toggled(self, on: bool) -> None:
+        self.cfg.set("ui.theme_motion", bool(on))
+        self.cfg.save()
+        self.backdrop.set_motion(on)
+        self.hero.set_motion(on)
+
+    def _on_banner_toggled(self, on: bool) -> None:
+        self.cfg.set("ui.theme_banner", bool(on))
+        self.cfg.save()
+        self.hero.setVisible(bool(on))
+
+    def _collapse_hero(self) -> None:
+        if hasattr(self, "banner_check"):
+            self.banner_check.setChecked(False)   # 走同一条落盘路径
+        else:
+            self._on_banner_toggled(False)
+
+    def restyle(self) -> None:
+        """换肤后刷新那些不走全局 QSS 的地方（内联样式 + 自绘层）。"""
+        self.backdrop.reload()
+        self.hero.reload()
+        for key, chip in getattr(self, "_theme_chips", {}).items():
+            chip.set_selected(key == theme.current())
+        if hasattr(self, "email_backtrans"):
+            self.email_backtrans.setStyleSheet(
+                f"color: {theme.TEXT_SECONDARY}; font-size: 13px;")
+        self._sync_shell_state()
+        self.update()
+
     # ---------- 更新 ----------
 
     def _on_check_update(self) -> None:
@@ -1052,7 +1203,7 @@ class MainWindow(ShellWindowMixin, QMainWindow):
 
     def _show_test_result(self, msg: str, ok: bool) -> None:
         self.test_btn.setEnabled(True)
-        color = "#3AA675" if ok else theme.ACCENT
+        color = theme.OK if ok else theme.ACCENT
         self.test_result.setStyleSheet(f"color: {color};")
         self.test_result.setText(msg)
 
@@ -1092,7 +1243,7 @@ class MainWindow(ShellWindowMixin, QMainWindow):
             self.hotkey_status.setStyleSheet(f"color: {theme.ACCENT};")
             self.hotkey_status.setText(f"⚠ {error}")
         else:
-            self.hotkey_status.setStyleSheet("color: #3AA675;")
+            self.hotkey_status.setStyleSheet(f"color: {theme.OK};")
             self.hotkey_status.setText("全局快捷键已生效")
 
     def showEvent(self, event):
