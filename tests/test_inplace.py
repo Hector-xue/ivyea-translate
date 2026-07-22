@@ -377,31 +377,44 @@ def test_ink_for_picks_contrast_color(qapp, bg_hex, expect_dark_ink):
     assert ink.name().upper() == (INK_DARK if expect_dark_ink else INK_LIGHT).upper()
 
 
-# ---------- 小选区：别把胶囊/提示糊到选区外（对标微信的克制） ----------
+# ---------- 状态/品牌全在工具条：选区内绝不盖内容 ----------
 
-def test_tiny_region_suppresses_hint_and_status(qapp):
+def test_status_lives_in_toolbar_not_over_content(qapp):
+    """进度文案显示在工具条里（任何选区大小都可感知），完成后换回按钮组。"""
     from PySide6.QtCore import QRect
 
     from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
 
     ov = InPlaceOverlay(QRect(300, 300, 46, 34), _shot(qapp, 46, 34), 1.0)
-    # 提示条比选区宽：一个角都塞不下 -> 干脆不画
-    assert ov._least_covering_corner(200, 20) is None
-    # 进行中的状态胶囊装不下也不画（呼吸外框已表明在干活），渲染不崩即可
-    ov.set_status("翻译中…")
+    tb = ov._toolbar
+    assert tb.status.isVisibleTo(tb)
+    assert tb.status.text() == "正在识别文字…"
+    assert not tb.btn_copy_res.isVisibleTo(tb)   # loading 期间动作按钮让位
+    ov.prepare([OcrBlock("hi", 6, 8, 30, 18, line_h=16)])
+    assert tb.status.text() == "翻译中…"
+    ov.set_block_text(0, "你好")
+    assert tb.status.isVisibleTo(tb)             # 还没 finish，进度不消失
+    ov.finish()
+    assert not tb.status.isVisibleTo(tb)
+    assert tb.btn_copy_res.isVisibleTo(tb)
     assert not ov.grab().isNull()
     ov.close()
 
 
-def test_tiny_region_failure_message_still_visible(qapp):
-    """失败信息不能因为选区小就吞掉：夹回窗口内照样画。"""
+def test_failure_message_shows_in_toolbar(qapp):
+    """失败信息不能吞掉：进工具条红字显示。"""
     from PySide6.QtCore import QRect
 
+    from ivyea_translate.ui import theme
     from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
 
     ov = InPlaceOverlay(QRect(300, 300, 46, 34), _shot(qapp, 46, 34), 1.0)
     ov.fail("识别失败：网络错误", auto_close_ms=60000)
     assert ov._terminal
+    tb = ov._toolbar
+    assert tb.status.isVisibleTo(tb)
+    assert "识别失败" in tb.status.text()
+    assert theme.DANGER in tb.status.styleSheet()
     assert not ov.grab().isNull()
     ov.close()
 

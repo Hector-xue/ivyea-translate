@@ -11,7 +11,12 @@ _cards 里的矩形永远是"选区内坐标"，绘制统一经 (offset_x, conte
 
 卡片底色不是毛玻璃而是"贴回原图"（Google Lens 式）：对每块译文取样底图边缘
 环带的平均色做纯色底、按亮度自动黑/白文字。块与块因各取邻近底色，视觉上融进
-原图；选区整体描一圈品牌绿外框 + 左上角小角标，用户一眼知道"这一层是翻译"。
+原图；选区整体描一圈品牌绿外框（loading 时呼吸），用户一眼知道"这一层是翻译"。
+
+选区内除了贴片和外框**不画任何东西**（v0.26.1 教训）：角标/提示/状态胶囊
+盖在用户正在看的内容上，小选区更是糊成一团。品牌、进度、退路全在工具条里——
+loading 期间工具条显示 [logo] 正在识别文字…/翻译中… ✕，完成后原地换成按钮组，
+任何大小的选区都能感知进度，且永远不挡字。
 
 必须能关掉（v0.25.0 踩过）：这是一扇置顶、无边框、盖在别人窗口上的窗，
 用户找不到出口就等于把屏幕黏死了。退路——工具条 ✕、Esc、点击空白处、
@@ -23,7 +28,7 @@ from __future__ import annotations
 import math
 from typing import List, Optional, Sequence, Tuple
 
-from PySide6.QtCore import QEvent, QPoint, QRect, QRectF, Qt, QTimer, QVariantAnimation, Signal
+from PySide6.QtCore import QEvent, QRect, QRectF, Qt, QTimer, QVariantAnimation, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -35,16 +40,16 @@ from PySide6.QtGui import (
     QPen,
     QPixmap,
 )
-from PySide6.QtWidgets import QApplication, QHBoxLayout, QPushButton, QWidget
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QPushButton, QWidget
 
 from . import theme
+from .widgets import screen_dpr
 
 CARD_RADIUS = 4           # 贴片圆角：小，更像"原文换了种文字"
-PILL_RADIUS = 8           # 状态条/提示条圆角
 CARD_PAD_X, CARD_PAD_Y = 8, 5
 MIN_FONT_PX, MAX_FONT_PX = 11, 40
-HINT_MS = 2600            # "Esc 关闭"提示显示时长
 TOOLBAR_GAP = 8           # 选区与工具条的间距
+TOOLBAR_LOGO = 14         # 工具条品牌小标边长
 INK_DARK = "#1F2937"      # 浅底上的文字色
 INK_LIGHT = "#F8FAF5"     # 深底上的文字色
 FRAME_ALPHA_IDLE = 200    # 选区外框描边透明度（静止态）
@@ -155,7 +160,11 @@ def ink_for(bg: QColor) -> QColor:
 
 
 class OverlayToolbar(QWidget):
-    """覆盖层的迷你工具条：复制译文 | 复制原文 | 原文 | 弹窗 | ✕。"""
+    """覆盖层的迷你工具条——品牌、进度、动作、退路都住在这里，不占选区。
+
+    loading：[logo] 正在识别文字…/翻译中… | ✕
+    完成后：[logo] 复制译文 | 复制原文 | 原文 | 弹窗 | ✕
+    """
 
     def __init__(self, parent: QWidget):
         super().__init__(parent)
@@ -182,8 +191,12 @@ class OverlayToolbar(QWidget):
             """
         )
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(6, 3, 6, 3)
+        lay.setContentsMargins(8, 3, 6, 3)
         lay.setSpacing(2)
+        lay.addWidget(self._brand_mark())
+        self.status = QLabel("")
+        self.status.setVisible(False)
+        lay.addWidget(self.status)
         self.btn_copy_res = QPushButton("复制译文")
         self.btn_copy_src = QPushButton("复制原文")
         self.btn_orig = QPushButton("原文")
@@ -202,6 +215,42 @@ class OverlayToolbar(QWidget):
         self.btn_copy_src.setEnabled(False)
         self.btn_popup.setEnabled(False)
 
+    def _brand_mark(self) -> QLabel:
+        """工具条左端的品牌小标；资源缺失退回一枚品牌绿圆点。"""
+        lb = QLabel()
+        lb.setStyleSheet("background: transparent;")
+        path = theme.asset_path("logo.png")
+        if path:
+            pm = QPixmap(path)
+            if not pm.isNull():
+                dpr = screen_dpr()
+                side = max(1, int(round(TOOLBAR_LOGO * dpr)))
+                pm = pm.scaled(side, side, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                pm.setDevicePixelRatio(dpr)
+                lb.setPixmap(pm)
+                lb.setFixedSize(TOOLBAR_LOGO, TOOLBAR_LOGO)
+                return lb
+        lb.setText("●")
+        lb.setStyleSheet(f"color: {theme.ACCENT}; font-size: 10px; background: transparent;")
+        return lb
+
+    def set_status(self, text: Optional[str], failed: bool = False) -> None:
+        """loading/失败期间动作按钮让位给状态文字；text=None 恢复按钮组。"""
+        actions = (self.btn_copy_res, self.btn_copy_src, self.btn_orig, self.btn_popup)
+        if text:
+            color = theme.DANGER if failed else theme.ACCENT
+            self.status.setStyleSheet(
+                f"color: {color}; font-size: 12px; padding: 4px 6px; background: transparent;")
+            self.status.setText(text)
+            self.status.setVisible(True)
+            for b in actions:
+                b.setVisible(False)
+        else:
+            self.status.setVisible(False)
+            for b in actions:
+                b.setVisible(True)
+        self.adjustSize()
+
 
 class InPlaceOverlay(QWidget):
     """一次原位翻译一个实例；工具条 ✕ / Esc / 点空白 / 切窗口 都能关闭。"""
@@ -218,8 +267,7 @@ class InPlaceOverlay(QWidget):
         self._blocks: List = []
         self._cards: List[Optional[Tuple[QRect, str, int, QColor, QColor]]] = []
         self._show_original = False
-        self._show_hint = True
-        self._terminal = False    # 已进失败/终态：状态文案必须让人看见
+        self._terminal = False    # 已进失败/终态
         self._frame_alpha = FRAME_ALPHA_IDLE
 
         self.setWindowFlags(
@@ -236,7 +284,7 @@ class InPlaceOverlay(QWidget):
         self._toolbar.btn_orig.toggled.connect(self._set_show_original)
         self._toolbar.btn_popup.clicked.connect(self._to_popup)
         self._toolbar.btn_close.clicked.connect(self.close)
-        self._toolbar.adjustSize()
+        self._toolbar.set_status(self._status)
         self._apply_geometry()
 
         # loading 态：选区外框呼吸（alpha 90↔220），比中央转圈更"活"也不挡内容
@@ -247,8 +295,6 @@ class InPlaceOverlay(QWidget):
         self._breath.setLoopCount(-1)
         self._breath.valueChanged.connect(self._on_breath)
         self._breath.start()
-
-        QTimer.singleShot(HINT_MS, self._drop_hint)
 
     def _apply_geometry(self) -> None:
         """窗口 = 选区 + 一条工具条。下方放不下就翻到上方；选区太窄就向右拓宽
@@ -285,11 +331,6 @@ class InPlaceOverlay(QWidget):
         self.activateWindow()   # 真正拿到键盘焦点，Esc 才有用
         self.setFocus(Qt.OtherFocusReason)
 
-    def _drop_hint(self) -> None:
-        if self._show_hint:
-            self._show_hint = False
-            self.update()
-
     # ---- 状态 ----
 
     def _set_loading(self, on: bool) -> None:
@@ -310,13 +351,17 @@ class InPlaceOverlay(QWidget):
 
     def set_status(self, text: str) -> None:
         self._status = text
+        self._toolbar.set_status(text)
+        self._apply_geometry()  # 工具条随文案变宽/变窄，重新锚位
         self.update()
 
     def fail(self, message: str, auto_close_ms: int = 2500) -> None:
         self._status = message
         self._terminal = True
         self._cards = []
+        self._toolbar.set_status(message, failed=True)
         self._set_loading(False)
+        self._apply_geometry()
         self.update()
         QTimer.singleShot(auto_close_ms, self.close)
 
@@ -327,9 +372,8 @@ class InPlaceOverlay(QWidget):
         if not self._blocks:
             self.fail("没有识别到文字", 1500)
             return
-        self._status = "翻译中…"
         self._toolbar.btn_copy_src.setEnabled(True)  # 原文此刻已到手
-        self.update()
+        self.set_status("翻译中…")
 
     def set_block_text(self, index: int, text: str) -> None:
         """回填第 index 块的译文（逐块到达，翻一块显示一块）。"""
@@ -347,15 +391,16 @@ class InPlaceOverlay(QWidget):
                      int(rect.width() * self._dpr), int(rect.height() * self._dpr))
         bg = sample_bg_color(self._shot_img, phys)
         self._cards[index] = (rect, text, px, bg, ink_for(bg))
-        self._status = None
         self.update()
 
     def finish(self) -> None:
         # 一张卡都没有时保留状态文案（"没有识别到文字"之类），否则就成了空窗
         if any(card is not None for card in self._cards):
             self._status = None
+            self._toolbar.set_status(None)  # 状态让位，按钮组回来
             self._toolbar.btn_copy_res.setEnabled(True)
             self._toolbar.btn_popup.setEnabled(True)
+            self._apply_geometry()
         self._set_loading(False)
         self.update()
 
@@ -402,23 +447,19 @@ class InPlaceOverlay(QWidget):
     # ---- 绘制 ----
 
     def paintEvent(self, event):
+        # 选区内只有贴片和外框，进度/品牌/退路都在工具条里——绝不盖住用户在看的内容
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
         p.setRenderHint(QPainter.TextAntialiasing, True)
         sel = self._selection_rect()
-        p.save()
-        p.translate(sel.topLeft())
         if not self._show_original:
+            p.save()
+            p.translate(sel.topLeft())
             for card in self._cards:
                 if card is not None:
                     self._paint_card(p, *card)
-        if self._status is not None:
-            self._paint_status(p)
-        if self._show_hint:
-            self._paint_hint(p)
-        p.restore()
+            p.restore()
         self._paint_frame(p, sel)
-        self._paint_badge(p, sel)
         p.end()
 
     def _paint_frame(self, p: QPainter, sel: QRect) -> None:
@@ -426,87 +467,6 @@ class InPlaceOverlay(QWidget):
         p.setPen(QPen(QColor(107, 165, 63, self._frame_alpha), 1.5))
         p.setBrush(Qt.NoBrush)
         p.drawRoundedRect(QRectF(sel).adjusted(0.75, 0.75, -0.75, -0.75), 6, 6)
-
-    def _paint_badge(self, p: QPainter, sel: QRect) -> None:
-        """左上角品牌小角标：告诉用户"这一层是翻译"。太小的选区不画，别喧宾夺主。"""
-        if sel.width() < 140 or sel.height() < 48:
-            return
-        font = QFont(theme.FONT_FAMILY)
-        font.setPixelSize(10)
-        font.setBold(True)
-        fm = QFontMetrics(font)
-        text = "Ivyea 译"
-        rect = QRect(sel.x() + 6, sel.y() + 6,
-                     fm.horizontalAdvance(text) + 14, fm.height() + 6)
-        self._paint_glass(p, rect)
-        p.setFont(font)
-        p.setPen(QColor(theme.ACCENT))
-        p.drawText(rect, Qt.AlignCenter, text)
-
-    def _paint_status(self, p: QPainter) -> None:
-        font = QFont(theme.FONT_FAMILY)
-        font.setPixelSize(13)
-        p.setFont(font)
-        fm = QFontMetrics(font)
-        rect = QRect(0, 0, fm.horizontalAdvance(self._status) + 28, fm.height() + 14)
-        rect.moveCenter(QPoint(self._region.width() // 2, self._region.height() // 2))
-        if (rect.width() + 8 > self._region.width()
-                or rect.height() + 8 > self._region.height()):
-            if not self._terminal:
-                return  # 小选区进行中：呼吸外框已表明在干活，胶囊糊出去只会更乱
-            # 失败信息必须让人看见：夹回窗口范围内（窗口坐标换算到选区坐标系）
-            win = QRect(-self._offset_x, -self._content_top, self.width(), self.height())
-            rect.moveLeft(max(win.left(), min(rect.left(), win.right() - rect.width() + 1)))
-            rect.moveTop(max(win.top(), min(rect.top(), win.bottom() - rect.height() + 1)))
-        self._paint_glass(p, rect)
-        p.setPen(QColor(theme.ACCENT))
-        p.drawText(rect, Qt.AlignCenter, self._status)
-
-    def _paint_hint(self, p: QPainter) -> None:
-        """开头几秒告诉用户怎么退出——置顶窗最怕的就是"关不掉"。"""
-        font = QFont(theme.FONT_FAMILY)
-        font.setPixelSize(11)
-        p.setFont(font)
-        fm = QFontMetrics(font)
-        text = "Esc 关闭 · 工具条可复制 / 看原文"
-        rect = self._least_covering_corner(
-            fm.horizontalAdvance(text) + 18, fm.height() + 8)
-        if rect is None:
-            return  # 各角都压着译文：宁可不提示，也不挡内容（工具条一直都在）
-        self._paint_glass(p, rect)
-        p.setPen(QColor(theme.TEXT_SECONDARY))
-        p.drawText(rect, Qt.AlignCenter, text)
-
-    def _least_covering_corner(self, w: int, h: int, margin: int = 6) -> Optional[QRect]:
-        """挑一个不压译文的角放提示（选区内坐标）；都被占就返回 None。
-
-        （左上角留给品牌角标，不参与竞争。）
-        """
-        rw, rh = self._region.width(), self._region.height()
-        sel = QRect(0, 0, rw, rh)
-        candidates = [
-            QRect(margin, rh - h - margin, w, h),           # 左下
-            QRect(rw - w - margin, rh - h - margin, w, h),  # 右下
-            QRect(rw - w - margin, margin, w, h),           # 右上
-        ]
-        for rect in candidates:
-            if not sel.contains(rect):
-                continue  # 选区本身就装不下提示：宁可不提示也别糊到选区外面
-            clear = all(
-                card is None or not rect.intersects(card[0])
-                for card in self._cards
-            )
-            if clear:
-                return rect
-        return None
-
-    def _paint_glass(self, p: QPainter, rect: QRect) -> None:
-        """状态条/角标托底：近实白底 + 品牌绿描边，深浅背景上都看得清。"""
-        path = QPainterPath()
-        path.addRoundedRect(QRectF(rect), PILL_RADIUS, PILL_RADIUS)
-        p.fillPath(path, QColor(255, 255, 255, 246))
-        p.setPen(QPen(QColor(107, 165, 63, 210), 1.5))
-        p.drawPath(path)
 
     def _paint_card(self, p: QPainter, rect: QRect, text: str, px: int,
                     bg: QColor, fg: QColor) -> None:
