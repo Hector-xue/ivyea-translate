@@ -225,6 +225,46 @@ def test_overlay_closes_on_window_deactivate(qapp):
     assert seen
 
 
+def test_pinned_overlay_survives_deactivate(qapp):
+    """钉住后切窗口不消失；✕ 仍然能关。"""
+    from PySide6.QtCore import QEvent, QRect
+
+    from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
+
+    ov = InPlaceOverlay(QRect(0, 0, 400, 200), _shot(qapp), 1.0)
+    ov.show()
+    ov._toolbar.btn_pin.setChecked(True)
+    assert ov.is_pinned
+    seen = []
+    ov.closed.connect(lambda: seen.append(1))
+    ov.event(QEvent(QEvent.WindowDeactivate))
+    qapp.processEvents()
+    assert not seen                      # 钉住：切窗口豁免
+    ov._toolbar.btn_close.click()
+    qapp.processEvents()
+    assert seen                          # ✕ 永远有效
+
+
+def test_click_inside_does_not_close(qapp):
+    """点译文区域不再"一点就没"（v0.26.3 误触反馈）。"""
+    from PySide6.QtCore import QPointF, QEvent, QRect, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
+
+    ov = InPlaceOverlay(QRect(0, 0, 400, 200), _shot(qapp), 1.0)
+    ov.set_blocks([OcrBlock("o", 20, 30, 300, 40, line_h=18)], ["译文"])
+    ov.show()
+    seen = []
+    ov.closed.connect(lambda: seen.append(1))
+    ev = QMouseEvent(QEvent.MouseButtonPress, QPointF(50, 50), QPointF(50, 50),
+                     Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
+    qapp.sendEvent(ov, ev)
+    qapp.processEvents()
+    assert not seen
+    ov.close()
+
+
 def test_overlay_copy_buttons(qapp):
     """复制译文/复制原文走剪贴板；翻译完成前复制译文不可用。"""
     from PySide6.QtCore import QRect

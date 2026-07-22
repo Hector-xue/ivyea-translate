@@ -9,7 +9,10 @@ set_original 回填原文并开始翻译，消除等待黑箱感。
 """
 from __future__ import annotations
 
+import logging
 from typing import Optional, Tuple
+
+log = logging.getLogger(__name__)
 
 from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QCursor, QFont, QGuiApplication, QPixmap, QTextCursor, QTextOption
@@ -284,6 +287,7 @@ class TranslationPopup(QWidget):
 
     def set_status(self, text: str) -> None:
         self.status_label.setText(text)
+        self.repaint()
 
     def set_original(self, text: str) -> None:
         self.original_text = text
@@ -291,6 +295,7 @@ class TranslationPopup(QWidget):
             self._orig_view.setPlainText(text)
             self._set_original_visible(True)
         self._relayout()
+        self.repaint()
 
     def _set_original_visible(self, visible: bool) -> None:
         for w in (self._orig_toggle, self._orig_view, self._divider):
@@ -329,6 +334,10 @@ class TranslationPopup(QWidget):
     def _on_flush_timeout(self) -> None:
         self._flush_pending(self.result_view, "_pending_result")
         self._flush_pending(self._explain_view, "_pending_explain")
+        # Windows 实测：不抢焦点的置顶半透明窗，update() 走的异步重绘偶尔要等
+        # 下一次输入事件才上屏（用户反馈"点一下鼠标结果才出来"）。流式刷新和
+        # 落定各补一次同步 repaint，把像素立刻推上屏幕。
+        self.repaint()
 
     def append_chunk(self, piece: str) -> None:
         self._result_parts.append(piece)
@@ -337,20 +346,24 @@ class TranslationPopup(QWidget):
 
     def set_done(self, full_text: str) -> None:
         # 先落定文本再改状态：两者同帧完成，不会出现"译文出完了还写着翻译中"
+        log.info("弹窗译文落定（%d 字）", len(full_text))
         self._flush_timer.stop()
         self._pending_result = []
         self.result_view.setPlainText(full_text)
         self._result_parts = [full_text]
         self.status_label.setText("已翻译")
         self._relayout()
+        self.repaint()  # 见 _on_flush_timeout：确保结果立刻上屏，不等下次输入事件
 
     def set_failed(self, message: str) -> None:
+        log.info("弹窗翻译失败：%s", message)
         self._flush_timer.stop()
         self._pending_result = []
         self.status_label.setText("失败")
         self.result_view.setPlainText(message)
         self.result_view.setStyleSheet(f"color: {theme.ACCENT};")
         self._relayout()
+        self.repaint()
 
     # ---- 详解模式 ----
 

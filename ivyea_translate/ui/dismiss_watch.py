@@ -84,8 +84,11 @@ class GlobalDismissWatcher(QObject):
         if self.running:
             return True
         if _WINDOWS and self._start_polling():
+            log.info("弹窗关闭监听：轮询模式")
             return True
-        return self._start_pynput()
+        ok = self._start_pynput()
+        log.info("弹窗关闭监听：%s", "pynput 模式" if ok else "不可用（仅手动关闭）")
+        return ok
 
     def stop(self) -> None:
         if self._timer is not None:
