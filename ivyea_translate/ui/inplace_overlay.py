@@ -219,6 +219,7 @@ class InPlaceOverlay(QWidget):
         self._cards: List[Optional[Tuple[QRect, str, int, QColor, QColor]]] = []
         self._show_original = False
         self._show_hint = True
+        self._terminal = False    # 已进失败/终态：状态文案必须让人看见
         self._frame_alpha = FRAME_ALPHA_IDLE
 
         self.setWindowFlags(
@@ -260,9 +261,11 @@ class InPlaceOverlay(QWidget):
         below = self._region.bottom() + ext <= avail.bottom()
         self._content_top = 0 if below else ext
         win_w = max(self._region.width(), tb.width())
-        win_x = self._region.x()
-        if win_x + win_w - 1 > avail.right():
-            win_x = max(avail.left(), avail.right() - win_w + 1)
+        # 窗口比选区宽（小选区）时以选区为中心拓宽：工具条正好锚在选区正下方，
+        # 看起来是"跟着选区的"而不是斜出去一条
+        win_x = (self._region.center().x() - win_w // 2
+                 if win_w > self._region.width() else self._region.x())
+        win_x = max(avail.left(), min(win_x, avail.right() - win_w + 1))
         self._offset_x = self._region.x() - win_x
         win_y = self._region.y() - self._content_top
         self.setGeometry(win_x, win_y, win_w, self._region.height() + ext)
@@ -299,7 +302,10 @@ class InPlaceOverlay(QWidget):
         self.update()
 
     def _on_breath(self, v: float) -> None:
-        self._frame_alpha = 90 + int((220 - 90) * 0.5 * (1 - math.cos(2 * math.pi * v)))
+        a = 90 + int((220 - 90) * 0.5 * (1 - math.cos(2 * math.pi * v)))
+        if abs(a - self._frame_alpha) < 6:
+            return  # 动画每帧都全窗重绘太奢侈；肉眼分不出 6 个 alpha 的差
+        self._frame_alpha = a
         self.update()
 
     def set_status(self, text: str) -> None:
@@ -308,6 +314,7 @@ class InPlaceOverlay(QWidget):
 
     def fail(self, message: str, auto_close_ms: int = 2500) -> None:
         self._status = message
+        self._terminal = True
         self._cards = []
         self._set_loading(False)
         self.update()
@@ -443,6 +450,14 @@ class InPlaceOverlay(QWidget):
         fm = QFontMetrics(font)
         rect = QRect(0, 0, fm.horizontalAdvance(self._status) + 28, fm.height() + 14)
         rect.moveCenter(QPoint(self._region.width() // 2, self._region.height() // 2))
+        if (rect.width() + 8 > self._region.width()
+                or rect.height() + 8 > self._region.height()):
+            if not self._terminal:
+                return  # 小选区进行中：呼吸外框已表明在干活，胶囊糊出去只会更乱
+            # 失败信息必须让人看见：夹回窗口范围内（窗口坐标换算到选区坐标系）
+            win = QRect(-self._offset_x, -self._content_top, self.width(), self.height())
+            rect.moveLeft(max(win.left(), min(rect.left(), win.right() - rect.width() + 1)))
+            rect.moveTop(max(win.top(), min(rect.top(), win.bottom() - rect.height() + 1)))
         self._paint_glass(p, rect)
         p.setPen(QColor(theme.ACCENT))
         p.drawText(rect, Qt.AlignCenter, self._status)
@@ -468,12 +483,15 @@ class InPlaceOverlay(QWidget):
         （左上角留给品牌角标，不参与竞争。）
         """
         rw, rh = self._region.width(), self._region.height()
+        sel = QRect(0, 0, rw, rh)
         candidates = [
             QRect(margin, rh - h - margin, w, h),           # 左下
             QRect(rw - w - margin, rh - h - margin, w, h),  # 右下
             QRect(rw - w - margin, margin, w, h),           # 右上
         ]
         for rect in candidates:
+            if not sel.contains(rect):
+                continue  # 选区本身就装不下提示：宁可不提示也别糊到选区外面
             clear = all(
                 card is None or not rect.intersects(card[0])
                 for card in self._cards

@@ -112,10 +112,11 @@ class TranslateApp(QApplication):
         self.watcher.double_window_s = float(self.cfg.get("double_copy.window_ms", 700)) / 1000
         self.watcher.double_copied.connect(self._popup_translate_at_cursor)
 
-        # 弹窗"点外部/滚动即关"：全局鼠标监听，只在有未钉住弹窗时运行
+        # 弹窗"点外部/切走即关"：全局探测，只在有未钉住弹窗时运行
         self.dismiss = GlobalDismissWatcher(self)
         self.dismiss.mouse_pressed.connect(self._on_global_press)
         self.dismiss.mouse_scrolled.connect(self._on_global_press)
+        self.dismiss.foreground_changed.connect(self._on_foreground_changed)
         self.aboutToQuit.connect(self.dismiss.stop)
 
         self.window = MainWindow(self.cfg)
@@ -288,6 +289,27 @@ class TranslateApp(QApplication):
         pos = QCursor.pos()
         for p in list(self._popups):
             if not p.is_pinned and p.isVisible() and not p.frameGeometry().contains(pos):
+                p.close()
+
+    def _on_foreground_changed(self) -> None:
+        """前台应用换了（Windows 轮询路径，含纯键盘 Alt+Tab）：未钉住弹窗全收走。
+
+        换成自家窗口（点了弹窗/主窗）不算离开。"""
+        if QApplication.activePopupWidget() is not None:
+            return
+        from .ui.dismiss_watch import foreground_window_id
+
+        fg = foreground_window_id()
+        own = set()
+        for w in [self.window, *self._popups]:
+            try:
+                own.add(int(w.winId()))
+            except RuntimeError:
+                pass  # 已被 Qt 销毁
+        if fg and fg in own:
+            return
+        for p in list(self._popups):
+            if not p.is_pinned and p.isVisible():
                 p.close()
 
     def _on_explain_requested(self, popup: TranslationPopup) -> None:

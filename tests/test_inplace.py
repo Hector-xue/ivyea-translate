@@ -377,6 +377,51 @@ def test_ink_for_picks_contrast_color(qapp, bg_hex, expect_dark_ink):
     assert ink.name().upper() == (INK_DARK if expect_dark_ink else INK_LIGHT).upper()
 
 
+# ---------- 小选区：别把胶囊/提示糊到选区外（对标微信的克制） ----------
+
+def test_tiny_region_suppresses_hint_and_status(qapp):
+    from PySide6.QtCore import QRect
+
+    from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
+
+    ov = InPlaceOverlay(QRect(300, 300, 46, 34), _shot(qapp, 46, 34), 1.0)
+    # 提示条比选区宽：一个角都塞不下 -> 干脆不画
+    assert ov._least_covering_corner(200, 20) is None
+    # 进行中的状态胶囊装不下也不画（呼吸外框已表明在干活），渲染不崩即可
+    ov.set_status("翻译中…")
+    assert not ov.grab().isNull()
+    ov.close()
+
+
+def test_tiny_region_failure_message_still_visible(qapp):
+    """失败信息不能因为选区小就吞掉：夹回窗口内照样画。"""
+    from PySide6.QtCore import QRect
+
+    from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
+
+    ov = InPlaceOverlay(QRect(300, 300, 46, 34), _shot(qapp, 46, 34), 1.0)
+    ov.fail("识别失败：网络错误", auto_close_ms=60000)
+    assert ov._terminal
+    assert not ov.grab().isNull()
+    ov.close()
+
+
+def test_toolbar_centers_under_small_selection(qapp):
+    """小选区拓宽窗口时以选区为中心：工具条锚在选区正下方而不是斜出去。"""
+    from PySide6.QtCore import QRect
+
+    from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
+
+    region = QRect(400, 300, 80, 60)
+    ov = InPlaceOverlay(region, _shot(qapp, 80, 60), 1.0)
+    sel = ov._selection_rect()
+    # 选区仍精确覆盖原位置
+    assert ov.geometry().x() + sel.x() == region.x()
+    tb_center = ov._toolbar.geometry().center().x()
+    assert abs(tb_center - sel.center().x()) <= 2
+    ov.close()
+
+
 def test_overlay_paints_without_crash_after_fill(qapp):
     """离屏跑一遍完整 paintEvent（卡片+外框+角标+状态），别等 Windows 上才炸。"""
     from PySide6.QtCore import QRect

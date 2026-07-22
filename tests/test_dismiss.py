@@ -95,6 +95,69 @@ def test_watcher_relays_press_and_scroll_as_signals(fake_pynput):
     w.stop()
 
 
+# ---------- Windows 轮询路径（零钩子；假 user32 驱动） ----------
+
+class _FakeUser32:
+    def __init__(self):
+        self.states = {}
+        self.fg = 111
+
+    def GetAsyncKeyState(self, vk):
+        state = self.states.get(vk, 0)
+        self.states[vk] = state & 0x8000  # 低位"按过"读一次即清，模拟真实语义
+        return state
+
+    def GetForegroundWindow(self):
+        return self.fg
+
+
+@pytest.fixture()
+def polling_watcher(qapp, monkeypatch):
+    from ivyea_translate.ui import dismiss_watch
+
+    fake = _FakeUser32()
+    monkeypatch.setattr(dismiss_watch, "_WINDOWS", True)
+    monkeypatch.setattr(dismiss_watch, "_get_user32", lambda: fake)
+    w = dismiss_watch.GlobalDismissWatcher()
+    assert w.start() and w.running
+    yield w, fake
+    w.stop()
+
+
+def test_polling_detects_held_click(polling_watcher):
+    w, fake = polling_watcher
+    pressed = []
+    w.mouse_pressed.connect(lambda: pressed.append(1))
+    fake.states[0x01] = 0x8000     # 按下并保持
+    w._poll()
+    w._poll()                      # 持续按住不重复报
+    assert len(pressed) == 1
+
+
+def test_polling_catches_fast_click_between_ticks(polling_watcher):
+    """两次轮询之间完成的快速点击靠 GetAsyncKeyState 的低位补漏。"""
+    w, fake = polling_watcher
+    pressed = []
+    w.mouse_pressed.connect(lambda: pressed.append(1))
+    fake.states[0x01] = 0x0001     # 已松开，但"自上次调用以来按过"
+    w._poll()
+    assert len(pressed) == 1
+    w._poll()                      # 低位已被读取清掉，不重复报
+    assert len(pressed) == 1
+
+
+def test_polling_reports_foreground_change(polling_watcher):
+    """前台窗口一换就发信号——覆盖纯键盘 Alt+Tab 切走的场景。"""
+    w, fake = polling_watcher
+    seen = []
+    w.foreground_changed.connect(lambda: seen.append(1))
+    w._poll()
+    assert not seen                # 前台没变不吵
+    fake.fg = 222
+    w._poll()
+    assert len(seen) == 1
+
+
 def test_watcher_degrades_when_listener_unavailable(qapp, monkeypatch):
     """Wayland 等环境起不了全局监听：start 返回 False，行为退回手动关闭。"""
 
