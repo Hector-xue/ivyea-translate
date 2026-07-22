@@ -210,8 +210,10 @@ class BlockTranslateWorker(QThread):
 
     早期版本把所有块拼成一次请求、再按空行切回，只要模型少给一个空行，整屏
     译文就会集体错位贴到别人的段落上。改成一块一次请求后，"哪段译文属于哪个框"
-    由结构保证，不再依赖模型守规矩。块数通常 1-4，串行发也快，还顺带避免了
-    免费引擎被并发打到限流。
+    由结构保证，不再依赖模型守规矩。
+
+    并发 2：多段截图近乎倍速。保守取 2——免费引擎不至于触发限流（真撞上也有
+    回退链兜底），自定义地址指向本地单实例模型（ollama 等）最多排队、不劣化。
     """
 
     block_done = Signal(int, str)   # 块序号, 译文
@@ -230,30 +232,39 @@ class BlockTranslateWorker(QThread):
     def cancel(self) -> None:
         self._cancelled = True
 
-    def run(self) -> None:
-        for idx, text in enumerate(self._texts):
-            if self._cancelled:
-                return
-            if not text.strip():
-                continue
-            try:
-                if getattr(self._client, "is_free", False):
-                    result = self._client.translate(
-                        text, self._target_language,
-                        should_abort=lambda: self._cancelled)
-                else:
-                    messages = build_messages(text, self._target_language, self._style)
-                    result = "".join(self._client.stream_chat(messages))
-            except LLMError as e:
-                if not self._cancelled:
-                    self.block_failed.emit(idx, str(e))
-                continue
-            except Exception as e:
-                if not self._cancelled:
-                    self.block_failed.emit(idx, f"{e.__class__.__name__}: {e}")
-                continue
+    def _translate_one(self, idx: int, text: str) -> None:
+        if self._cancelled:
+            return
+        try:
+            if getattr(self._client, "is_free", False):
+                result = self._client.translate(
+                    text, self._target_language,
+                    should_abort=lambda: self._cancelled)
+            else:
+                messages = build_messages(text, self._target_language, self._style)
+                result = "".join(self._client.stream_chat(messages))
+        except LLMError as e:
             if not self._cancelled:
-                self.block_done.emit(idx, result.strip())
+                self.block_failed.emit(idx, str(e))
+            return
+        except Exception as e:
+            if not self._cancelled:
+                self.block_failed.emit(idx, f"{e.__class__.__name__}: {e}")
+            return
+        if not self._cancelled:
+            self.block_done.emit(idx, result.strip())
+
+    def run(self) -> None:
+        todo = [(i, t) for i, t in enumerate(self._texts) if t.strip()]
+        if len(todo) <= 1:
+            for idx, text in todo:
+                self._translate_one(idx, text)
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                for fut in [ex.submit(self._translate_one, i, t) for i, t in todo]:
+                    fut.result()
         if not self._cancelled:
             self.finished_all.emit()
 

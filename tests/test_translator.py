@@ -171,3 +171,33 @@ def test_block_worker_reports_failure_per_block(qapp):
     loop.exec()
     worker.wait(2000)
     assert fails and fails[0][0] == 0 and "额度不足" in fails[0][1]
+
+
+def test_block_worker_runs_blocks_concurrently(qapp):
+    """并发 2：两块各睡 0.4s，总耗时应明显小于串行的 0.8s。"""
+    import time
+
+    from PySide6.QtCore import QEventLoop, QTimer
+
+    from ivyea_translate.translator import BlockTranslateWorker
+
+    class Slow:
+        is_free = True
+
+        def translate(self, text, target_language, should_abort=None):
+            time.sleep(0.4)
+            return f"译[{text}]"
+
+    got = {}
+    worker = BlockTranslateWorker(Slow(), ["a", "b"], "zh-CN", "general")
+    worker.block_done.connect(lambda i, t: got.__setitem__(i, t))
+    loop = QEventLoop()
+    worker.finished_all.connect(loop.quit)
+    QTimer.singleShot(5000, loop.quit)
+    t0 = time.monotonic()
+    worker.start()
+    loop.exec()
+    worker.wait(2000)
+    elapsed = time.monotonic() - t0
+    assert got == {0: "译[a]", 1: "译[b]"}
+    assert elapsed < 0.75, f"两块应并行执行，实际 {elapsed:.2f}s"

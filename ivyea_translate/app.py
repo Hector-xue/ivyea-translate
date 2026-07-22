@@ -58,20 +58,26 @@ class _Bridge(QObject):
 
 
 class OcrThread(threading.Thread):
-    """后台识别。mode="popup" 只要文本；mode="inplace" 还要每段的包围框。"""
+    """后台识别。mode="popup" 只要文本；mode="inplace" 还要每段的包围框。
 
-    def __init__(self, bridge: _Bridge, image_path: str, anchor: QRect,
+    收 QImage 不收文件路径：截图内存直通 OCR，省掉 PNG 编码落盘再读回解码
+    的 50-200ms（QImage 可安全跨线程，QPixmap 不行——转换必须在主线程做完）。
+    """
+
+    def __init__(self, bridge: _Bridge, image, anchor: QRect,
                  mode: str = "popup"):
         super().__init__(daemon=True)
         self._bridge = bridge
-        self._path = image_path
+        self._image = image
         self._anchor = anchor
         self._mode = mode
 
     def run(self):
+        from .ocr import qimage_to_rgb
+
         inplace = self._mode == "inplace"
         try:
-            blocks = ocr_engine.recognize_blocks(self._path)
+            blocks = ocr_engine.recognize_blocks_array(qimage_to_rgb(self._image))
             if inplace:
                 if blocks:
                     self._bridge.blocks_ready.emit(list(blocks), self._anchor)
@@ -142,6 +148,7 @@ class TranslateApp(QApplication):
 
         self._setup_tray()
         ocr_engine.warmup_async()
+        self._prewarm_engines()
 
         from PySide6.QtCore import QTimer
 
@@ -199,6 +206,20 @@ class TranslateApp(QApplication):
         self._register_hotkeys()
         self.watcher.max_chars = int(self.cfg.get("double_copy.max_chars", 3000))
         self.watcher.double_copy_enabled = bool(self.cfg.get("double_copy.enabled", True))
+        # 接口地址可能变了：作废旧连接池，对新端点重建并预热
+        from .llm import reset_http_pool
+
+        reset_http_pool()
+        self._prewarm_engines()
+
+    def _prewarm_engines(self) -> None:
+        """预热翻译端点的 TLS 连接：首次翻译不付握手税（不发正式请求、不耗 token）。"""
+        from .free_engine import prewarm_async as free_prewarm
+        from .llm import prewarm_async as llm_prewarm
+
+        if (self.cfg.get("provider.api_key") or "").strip():
+            llm_prewarm((self.cfg.get("provider.base_url") or "").strip())
+        free_prewarm()
 
     def _toggle_pause(self, paused: bool) -> None:
         """临时暂停/恢复"Ctrl+C+C"监听（仅本次运行，不写配置）。"""
@@ -380,18 +401,8 @@ class TranslateApp(QApplication):
     def _clear_overlay(self) -> None:
         self._overlay = None
 
-    def _save_shot(self, pixmap: QPixmap) -> str:
-        import tempfile
-
-        tmp = tempfile.NamedTemporaryFile(
-            suffix=".png", prefix="ivyea_shot_", delete=False, dir=str(CONFIG_DIR)
-        )
-        tmp.close()
-        pixmap.save(tmp.name, "PNG")
-        return tmp.name
-
-    def _start_ocr(self, path: str, rect: QRect, mode: str) -> None:
-        thread = OcrThread(self.bridge, path, rect, mode)
+    def _start_ocr(self, image, rect: QRect, mode: str) -> None:
+        thread = OcrThread(self.bridge, image, rect, mode)
         self._ocr_threads = [t for t in self._ocr_threads if t.is_alive()]
         self._ocr_threads.append(thread)
         thread.start()
@@ -411,7 +422,7 @@ class TranslateApp(QApplication):
         popup.show_near(rect)
         self._shot_popup = popup
         popup.destroyed.connect(lambda: setattr(self, "_shot_popup", None))
-        self._start_ocr(self._save_shot(pixmap), rect, "popup")
+        self._start_ocr(pixmap.toImage(), rect, "popup")
 
     def _on_ocr_ready(self, text: str, anchor: QRect) -> None:
         popup = getattr(self, "_shot_popup", None)
@@ -446,7 +457,7 @@ class TranslateApp(QApplication):
         overlay.popup_requested.connect(self._on_inplace_popup)
         self._inplace = overlay
         overlay.start()
-        self._start_ocr(self._save_shot(pixmap), rect, "inplace")
+        self._start_ocr(pixmap.toImage(), rect, "inplace")
 
     def _on_blocks_ready(self, blocks: list, anchor: QRect) -> None:
         from .free_engine import resolve_engine

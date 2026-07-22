@@ -78,16 +78,61 @@ def _client() -> httpx.Client:
     return httpx.Client(timeout=TIMEOUT_S, follow_redirects=True, headers={"User-Agent": _UA})
 
 
+# 持久连接（keep-alive）：每次翻译新建 Client = 每次都重走 TCP+TLS 握手，
+# 对境外端点 100-400ms，短文本场景握手比翻译本身还贵。httpx.Client 线程安全。
+_client_lock = threading.Lock()
+_shared: Optional[httpx.Client] = None      # Google 等通用端点
+_deepl_cli: Optional[httpx.Client] = None   # DeepL 单独超时 4s
+
+
+def _shared_client() -> httpx.Client:
+    global _shared
+    with _client_lock:
+        if _shared is None or _shared.is_closed:
+            _shared = _client()
+        return _shared
+
+
+def _deepl_client() -> httpx.Client:
+    global _deepl_cli
+    with _client_lock:
+        if _deepl_cli is None or _deepl_cli.is_closed:
+            _deepl_cli = httpx.Client(timeout=4.0, headers={"User-Agent": _UA})
+        return _deepl_cli
+
+
+_PREWARM_URLS = {
+    "deepl": "https://www2.deepl.com",
+    "google": "https://translate.googleapis.com",
+    "bing": "https://www.bing.com",
+}
+
+
+def prewarm_async() -> None:
+    """后台预热 preferred 端点的 TLS 连接：首次翻译不付握手税。绝不抛。"""
+
+    def run():
+        name = free_engine.preferred or "google"
+        url = _PREWARM_URLS.get(name, _PREWARM_URLS["google"])
+        try:
+            client = _deepl_client() if name == "deepl" else _shared_client()
+            client.get(url, timeout=4.0)
+            log.info("免费引擎预热完成：%s", name)
+        except Exception as e:
+            log.info("免费引擎预热失败（不影响使用）：%s", e)
+
+    threading.Thread(target=run, daemon=True).start()
+
+
 # ---------- DeepL（keyless jsonrpc，best-effort） ----------
 
 def _deepl_translate(text: str, target_language: str) -> str:
     to_lang = DEEPL_LANG.get(target_language)
     if not to_lang:
         raise LLMError(f"DeepL 不支持目标语言 {target_language}")
-    out = []
-    with httpx.Client(timeout=4.0, headers={"User-Agent": _UA}) as c:
-        for chunk in split_for_translate(text):
-            out.append(_deepl_chunk(c, chunk, to_lang))
+    c = _deepl_client()
+    # DeepL 限流凶，分块保持串行，别并发触发 429
+    out = [_deepl_chunk(c, chunk, to_lang) for chunk in split_for_translate(text)]
     return "\n".join(out) if len(out) > 1 else out[0]
 
 
@@ -128,9 +173,16 @@ def _deepl_chunk(client: httpx.Client, text: str, to_lang: str) -> str:
 
 def _google_translate(text: str, target_language: str) -> str:
     to_lang = GOOGLE_LANG.get(target_language, target_language)
-    with _client() as c:
-        out = [_google_chunk(c, chunk, to_lang) for chunk in split_for_translate(text)]
-    return "\n".join(out) if len(out) > 1 else out[0]
+    c = _shared_client()
+    chunks = split_for_translate(text)
+    if len(chunks) == 1:
+        return _google_chunk(c, chunks[0], to_lang)
+    # 块间无依赖：并行发省掉串行往返（并发 2 保守，Google gtx 扛得住）
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        out = list(ex.map(lambda ch: _google_chunk(c, ch, to_lang), chunks))
+    return "\n".join(out)
 
 
 def _google_chunk(client: httpx.Client, text: str, to_lang: str) -> str:

@@ -65,3 +65,42 @@ def test_recognize_blocks_normalizes_engine_output():
     assert [b.text for b in blocks] == ["Hello", "World"]
     assert (blocks[0].x, blocks[0].y) == (10, 20)     # 除以放大倍数
     assert (blocks[0].w, blocks[0].h) == (100, 20)
+
+
+# ---------- 截图内存直通（不落盘） ----------
+
+def test_qimage_to_rgb_roundtrip(qapp):
+    import numpy as np
+    from PySide6.QtGui import QColor, QImage
+
+    from ivyea_translate.ocr import qimage_to_rgb
+
+    img = QImage(37, 20, QImage.Format_ARGB32)  # 宽度取奇数：验证 bytesPerLine 对齐处理
+    img.fill(QColor(10, 200, 30))
+    arr = qimage_to_rgb(img)
+    assert arr.shape == (20, 37, 3)
+    assert arr.dtype == np.uint8
+    assert tuple(arr[0, 0]) == (10, 200, 30)
+    assert tuple(arr[-1, -1]) == (10, 200, 30)
+
+
+def test_recognize_blocks_array_folds_upscale_coords(qapp):
+    """内存直通与文件路径同一条核心链路：小图放大识别、坐标折回原图。"""
+    import numpy as np
+
+    from ivyea_translate.ocr import OcrEngine
+
+    seen = {}
+
+    def fake_engine(arr):
+        seen["shape"] = arr.shape
+        # 在放大图上返回一行（坐标 = 放大图尺度）
+        return [[[[20, 20], [220, 20], [220, 60], [20, 60]], "hello", 0.9]], None
+
+    eng = OcrEngine()
+    eng._engine = fake_engine
+    blocks = eng.recognize_blocks_array(np.full((50, 200, 3), 255, dtype=np.uint8))
+    assert seen["shape"][0] == 100 and seen["shape"][1] == 400  # 小图放大 ×2 后识别
+    assert len(blocks) == 1
+    assert blocks[0].x == 10 and blocks[0].y == 10              # 坐标折回原图 ÷2
+    assert blocks[0].text == "hello"

@@ -154,3 +154,28 @@ def test_worker_uses_free_engine_nonstreaming(qapp):
     assert "err" not in got, got.get("err")
     assert got["full"] == "[ja]hello"
     assert chunks == ["[ja]hello"]
+
+
+# ---------- 持久连接 + 分块并行 ----------
+
+def test_shared_client_is_persistent():
+    """连接复用：反复取同一个 Client，不再每次翻译重建（重走 TLS 握手）。"""
+    from ivyea_translate import free_engine as fe
+
+    assert fe._shared_client() is fe._shared_client()
+    assert fe._deepl_client() is fe._deepl_client()
+    assert fe._shared_client() is not fe._deepl_client()
+
+
+def test_google_translate_parallel_chunks_keep_order(monkeypatch):
+    """长文本分块并行发，结果必须按原顺序拼回。"""
+    from ivyea_translate import free_engine as fe
+
+    def fake_chunk(client, text, to_lang):
+        return f"T({text[:4]})"
+
+    monkeypatch.setattr(fe, "_google_chunk", fake_chunk)
+    # 每段 600 字：两段相并 >900 会被拆开，稳定切成 3 块
+    text = "\n".join(["aaaa" * 150, "bbbb" * 150, "cccc" * 150])
+    out = fe._google_translate(text, "zh-CN")
+    assert out == "T(aaaa)\nT(bbbb)\nT(cccc)"
