@@ -261,7 +261,13 @@ class TranslateApp(QApplication):
         popup.set_done(result)
         self.window.add_history(source, result, target, self.cfg.get("translate.style", "general"))
 
+    # 刚出生的弹窗豁免"点外即关/切窗即关"：催生它的那次点击、以及它顶掉的
+    # 窗口（截图框选层/原位覆盖层）关闭引发的前台交接，都发生在出生后几百毫秒
+    # 内——没有豁免期，"弹窗"按钮点出来的对照弹窗会被当场误杀
+    POPUP_BIRTH_GRACE_S = 0.8
+
     def _track_popup(self, popup: TranslationPopup) -> None:
+        popup._born_at = time.monotonic()
         self._popups.append(popup)
         popup.explain_requested.connect(lambda p=popup: self._on_explain_requested(p))
         popup.pin_toggled.connect(self._sync_dismiss_watch)
@@ -287,7 +293,10 @@ class TranslateApp(QApplication):
         # 不用监听回调给的坐标（Windows 上是物理像素），读 QCursor.pos() 与
         # frameGeometry() 同一逻辑坐标系；frameGeometry 含阴影留边，自带容差
         pos = QCursor.pos()
+        now = time.monotonic()
         for p in list(self._popups):
+            if now - getattr(p, "_born_at", 0.0) < self.POPUP_BIRTH_GRACE_S:
+                continue
             if not p.is_pinned and p.isVisible() and not p.frameGeometry().contains(pos):
                 p.close()
 
@@ -308,7 +317,10 @@ class TranslateApp(QApplication):
                 pass  # 已被 Qt 销毁
         if fg and fg in own:
             return
+        now = time.monotonic()
         for p in list(self._popups):
+            if now - getattr(p, "_born_at", 0.0) < self.POPUP_BIRTH_GRACE_S:
+                continue
             if not p.is_pinned and p.isVisible():
                 p.close()
 
@@ -487,13 +499,14 @@ class TranslateApp(QApplication):
 
     def _on_inplace_popup(self, source: str, result: str, rect: QRect) -> None:
         """原位工具条点"弹窗"：已完成的原文/译文转成对照弹窗（不重新翻译）。"""
+        # 先收覆盖层：它正持有前台，留到最后关会让"前台变化"检测误杀新弹窗
+        self._close_inplace()
         popup = TranslationPopup(original=source, show_original=True,
                                  width=int(self.cfg.get("ui.popup_width", 520)),
                                  show_explain=self._explain_available())
         self._track_popup(popup)
         popup.set_done(result)
         popup.show_near(rect)
-        self._close_inplace()
 
     def _on_blocks_failed(self, message: str, anchor: QRect) -> None:
         if self._inplace is not None:

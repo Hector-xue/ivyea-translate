@@ -105,10 +105,12 @@ class GlobalDismissWatcher(QObject):
     def _start_polling(self) -> bool:
         try:
             self._user32 = _get_user32()
-            # 消掉"自上次调用以来按过"的残留位，并记下当前前台窗口做基线
+            # 消掉"自上次调用以来按过"的残留位，并记下当前前台窗口做基线。
+            # 基线必须取真实按下状态：监听常在一次点击（点"弹窗"按钮催生弹窗）
+            # 的按住期间启动，记成 False 会让下个 tick 把这次按住误判成新点击
             for vk in _VK_BUTTONS:
-                self._user32.GetAsyncKeyState(vk)
-                self._btn_down[vk] = False
+                state = int(self._user32.GetAsyncKeyState(vk)) & 0xFFFF
+                self._btn_down[vk] = bool(state & 0x8000)
             self._last_fg = int(self._user32.GetForegroundWindow())
         except Exception as e:
             log.info("鼠标轮询不可用：%s", e)

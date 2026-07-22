@@ -146,6 +146,29 @@ def test_polling_catches_fast_click_between_ticks(polling_watcher):
     assert len(pressed) == 1
 
 
+def test_polling_baseline_takes_current_button_state(qapp, monkeypatch):
+    """监听常在一次点击的按住期间启动（点按钮催生弹窗）：那次按住不算新点击。"""
+    from ivyea_translate.ui import dismiss_watch
+
+    fake = _FakeUser32()
+    fake.states[0x01] = 0x8000        # 启动那一刻左键正按着
+    monkeypatch.setattr(dismiss_watch, "_WINDOWS", True)
+    monkeypatch.setattr(dismiss_watch, "_get_user32", lambda: fake)
+    w = dismiss_watch.GlobalDismissWatcher()
+    assert w.start()
+    pressed = []
+    w.mouse_pressed.connect(lambda: pressed.append(1))
+    fake.states[0x01] = 0x8000        # 仍按着
+    w._poll()
+    assert not pressed                # 出生前的按住不算
+    fake.states[0x01] = 0x0000
+    w._poll()
+    fake.states[0x01] = 0x8001        # 松开后的新按下才算
+    w._poll()
+    assert len(pressed) == 1
+    w.stop()
+
+
 def test_polling_reports_foreground_change(polling_watcher):
     """前台窗口一换就发信号——覆盖纯键盘 Alt+Tab 切走的场景。"""
     w, fake = polling_watcher
