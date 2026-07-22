@@ -139,3 +139,24 @@ def test_explain_messages_structure():
 def test_explain_language_varies():
     sys_prompt = build_explain_messages("x", "y", "ja")[0]["content"]
     assert "Japanese" in sys_prompt
+
+
+# ---------- 回译校对覆盖主题（UI 接线层） ----------
+
+def test_backtranslation_includes_subject(qapp, tmp_path):
+    """邮件场景生成的主题也是生成物，回译校对必须一并覆盖，不能只校正文。"""
+    from ivyea_translate.config import Config
+    from ivyea_translate.ui.main_window import MainWindow
+
+    win = MainWindow(Config(tmp_path / "c.json"))
+    got = []
+    win._run_backtranslation = got.append
+    win._email_done("草稿", "【主题】Order Update\n【正文】\nHello body.", "email")
+    assert got and got[0].startswith("Order Update\n\n")
+    assert "Hello body." in got[0]
+
+    got.clear()
+    win._email_done("草稿", "Just a message.", "message")  # 无主题场景只回译正文
+    assert got == ["Just a message."]
+    win.really_quit = True
+    win.close()

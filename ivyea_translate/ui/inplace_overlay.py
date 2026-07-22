@@ -29,7 +29,7 @@ from __future__ import annotations
 import math
 from typing import List, Optional, Sequence, Tuple
 
-from PySide6.QtCore import QEvent, QRect, QRectF, Qt, QTimer, QVariantAnimation, Signal
+from PySide6.QtCore import QEvent, QRect, QRectF, QSize, Qt, QTimer, QVariantAnimation, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -44,7 +44,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QPushButton, QWidget
 
 from . import theme
-from .widgets import screen_dpr
+from .widgets import pin_icon, screen_dpr
 
 CARD_RADIUS = 4           # 贴片圆角：小，更像"原文换了种文字"
 CARD_PAD_X, CARD_PAD_Y = 8, 5
@@ -205,9 +205,13 @@ class OverlayToolbar(QWidget):
         self.btn_orig.setToolTip("整体切回屏幕上的原文（再点一下回到译文）")
         self.btn_popup = QPushButton("弹窗")
         self.btn_popup.setToolTip("转成原文/译文对照弹窗")
-        self.btn_pin = QPushButton("钉住")
+        self.btn_pin = QPushButton()
         self.btn_pin.setCheckable(True)
+        self.btn_pin.setFixedSize(26, 26)
+        self.btn_pin.setIconSize(QSize(15, 15))
         self.btn_pin.setToolTip("钉住：切到别的窗口也不消失（Esc / ✕ 仍可关）")
+        self.btn_pin.toggled.connect(self._sync_pin_icon)
+        self._sync_pin_icon(False)
         self.btn_close = QPushButton("✕")
         self.btn_close.setFixedWidth(26)
         for b in (self.btn_copy_res, self.btn_copy_src, self.btn_orig,
@@ -218,6 +222,10 @@ class OverlayToolbar(QWidget):
         self.btn_copy_res.setEnabled(False)
         self.btn_copy_src.setEnabled(False)
         self.btn_popup.setEnabled(False)
+
+    def _sync_pin_icon(self, checked: bool) -> None:
+        """与弹窗同款品牌绿图钉：未钉住淡一档，钉住实心（底衬由 :checked QSS 给）。"""
+        self.btn_pin.setIcon(pin_icon(theme.ACCENT, 15, 1.0 if checked else 0.55))
 
     def _brand_mark(self) -> QLabel:
         """工具条左端的品牌小标；资源缺失退回一枚品牌绿圆点。"""
@@ -457,6 +465,11 @@ class InPlaceOverlay(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
         p.setRenderHint(QPainter.TextAntialiasing, True)
+        # Windows 分层窗口按像素 alpha 做命中测试：全透明像素会让点击穿透到
+        # 底下的窗口，把它激活 -> 本层收到 WindowDeactivate 自关。翻译中贴片
+        # 还没画出来、选区内几乎全透明，用户点选区就"直接消失"——铺一层肉眼
+        # 不可见但 alpha 非零的底，把整扇窗变成实体命中区
+        p.fillRect(self.rect(), QColor(255, 255, 255, 3))
         sel = self._selection_rect()
         if not self._show_original:
             p.save()

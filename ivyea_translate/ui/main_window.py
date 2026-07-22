@@ -675,9 +675,12 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         self.email_btn.setText("生成")
         self.add_history(source, (f"【主题】{subject}\n{body}" if subject else body),
                          self.email_lang_combo.currentData(), "compose")
-        # 回译校对：把结果译回母语，确认意思没跑偏
-        if bool(self.cfg.get("email.backtranslate", True)) and body.strip():
-            self._run_backtranslation(body)
+        # 回译校对：把结果译回母语，确认意思没跑偏。主题也是生成物，一并回译
+        # （作为第一段），不能只校正文
+        if bool(self.cfg.get("email.backtranslate", True)):
+            combined = f"{subject}\n\n{body}" if subject.strip() else body
+            if combined.strip():
+                self._run_backtranslation(combined)
 
     def _run_backtranslation(self, body: str) -> None:
         try:

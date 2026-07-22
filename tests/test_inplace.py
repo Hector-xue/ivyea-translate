@@ -485,3 +485,33 @@ def test_overlay_paints_without_crash_after_fill(qapp):
     ov.set_blocks([OcrBlock("o", 20, 30, 300, 40, line_h=18)], ["译文"])
     assert not ov.grab().isNull()
     ov.close()
+
+
+def test_pin_button_uses_brand_icon_not_text(qapp):
+    """图钉与弹窗同款：自绘品牌绿图标，不是"钉住"两个字。"""
+    from PySide6.QtCore import QRect
+
+    from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
+
+    ov = InPlaceOverlay(QRect(0, 0, 400, 200), _shot(qapp), 1.0)
+    btn = ov._toolbar.btn_pin
+    assert btn.text() == ""
+    assert not btn.icon().isNull()
+    btn.setChecked(True)
+    assert not btn.icon().isNull()   # 钉住态换实心图标，仍是图标
+    ov.close()
+
+
+def test_overlay_paints_hit_base_over_transparent_area(qapp):
+    """选区空白处必须有 alpha 非零的底：全透明像素在 Windows 上会点击穿透，
+    激活底下窗口 -> WindowDeactivate 自关（"翻译中点选区就消失"bug）。"""
+    from PySide6.QtCore import QRect
+
+    from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
+
+    ov = InPlaceOverlay(QRect(0, 0, 400, 200), _shot(qapp), 1.0)  # loading，无贴片
+    img = ov.grab().toImage()
+    sel = ov._selection_rect()
+    c = img.pixelColor(sel.center())
+    assert c.alpha() > 0
+    ov.close()
