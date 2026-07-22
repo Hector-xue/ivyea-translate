@@ -30,6 +30,8 @@ _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 
 MAX_CHUNK = 900          # 单次请求字符上限
 COOLDOWN_S = 600         # 端点失败后的冷却时长（秒）
+TIMEOUT_S = 6.0          # 通用端点超时：15s 太久——被墙的端点（国内 Google）会把
+                         # 整条回退链拖成半分钟，用户只看到"翻译中"卡死
 
 # 应用语言码 -> 各服务语言码
 DEEPL_LANG: Dict[str, str] = {
@@ -73,7 +75,7 @@ def split_for_translate(text: str, max_chunk: int = MAX_CHUNK) -> List[str]:
 
 
 def _client() -> httpx.Client:
-    return httpx.Client(timeout=15.0, follow_redirects=True, headers={"User-Agent": _UA})
+    return httpx.Client(timeout=TIMEOUT_S, follow_redirects=True, headers={"User-Agent": _UA})
 
 
 # ---------- DeepL（keyless jsonrpc，best-effort） ----------
@@ -151,6 +153,8 @@ class _BingSession:
         self.ig = self.iid = self.key = self.token = None
         self.expire_at = 0.0
         self.iid_seq = 0
+        # 会话状态（token/iid_seq/共享 client）非线程安全；弹窗+原位可能并发翻译
+        self.lock = threading.Lock()
 
     def http(self) -> httpx.Client:
         if self.client is None:
@@ -176,6 +180,10 @@ class _BingSession:
         self.expire_at = time.time() + int(m_helper.group(3)) / 1000 - 60
 
     def chunk(self, text: str, to_lang: str) -> str:
+        with self.lock:
+            return self._chunk_locked(text, to_lang)
+
+    def _chunk_locked(self, text: str, to_lang: str) -> str:
         self.ensure()
         self.iid_seq += 1
         url = f"https://www.bing.com/ttranslatev3?isVertical=1&IG={self.ig}&IID={self.iid}.{self.iid_seq}"
@@ -218,12 +226,18 @@ _ENGINES: List[Tuple[str, Callable[[str, str], str]]] = [
 
 
 class FreeEngine:
-    """多端点自动回退。首选上次成功端点；失败端点冷却期内跳过。"""
+    """多端点自动回退。首选上次成功端点；失败端点冷却期内跳过。
+
+    锁只护 preferred/cooldown 状态，**绝不罩网络请求**（v0.26.2 教训）：曾用一把
+    全局锁罩住整条回退链，一个被墙端点卡在超时里就攥锁半分钟，弹窗被点关后
+    僵尸请求还抱着锁，用户后续所有翻译排在锁后面干等——表现为"翻译中"卡死、
+    结果在旧请求超时的瞬间突然蹦出。
+    """
 
     is_free = True
 
     def __init__(self):
-        self._lock = threading.Lock()
+        self._state_lock = threading.Lock()
         self._preferred: Optional[str] = None
         self._cooldown: Dict[str, float] = {}  # name -> 冷却结束时间戳
 
@@ -244,26 +258,35 @@ class FreeEngine:
             return (cooling, name != self._preferred)
         return sorted(_ENGINES, key=keyfn)
 
-    def translate(self, text: str, target_language: str) -> str:
+    def translate(self, text: str, target_language: str,
+                  should_abort: Optional[Callable[[], bool]] = None) -> str:
+        """翻译；should_abort 返回 True 时在下一个端点边界放弃（弹窗已被关，
+        没必要把整条回退链跑完再占着网络）。"""
         if not text.strip():
             return ""
-        with self._lock:
-            now = time.time()
-            errors = []
-            for name, fn in self._order(now):
-                try:
-                    result = fn(text, target_language)
-                    if result.strip():
+        with self._state_lock:
+            order = self._order(time.time())
+        errors = []
+        for name, fn in order:
+            if should_abort is not None and should_abort():
+                raise LLMError("已取消")
+            t0 = time.monotonic()
+            try:
+                result = fn(text, target_language)
+                if result.strip():
+                    with self._state_lock:
                         self._preferred = name
                         self._cooldown.pop(name, None)
-                        log.info("免费引擎命中：%s", name)
-                        return result
-                    raise LLMError("空结果")
-                except Exception as e:
+                    log.info("免费引擎命中：%s（%.1fs）", name, time.monotonic() - t0)
+                    return result
+                raise LLMError("空结果")
+            except Exception as e:
+                with self._state_lock:
                     self._cooldown[name] = time.time() + COOLDOWN_S
-                    errors.append(f"{name}:{e.__class__.__name__}")
-                    log.info("免费引擎 %s 失败（冷却 %ds）：%s", name, COOLDOWN_S, e)
-            raise LLMError("免费翻译暂不可用（" + " ".join(errors) + "），可在设置里配置大模型")
+                errors.append(f"{name}:{e.__class__.__name__}")
+                log.info("免费引擎 %s 失败（%.1fs，冷却 %ds）：%s",
+                         name, time.monotonic() - t0, COOLDOWN_S, e)
+        raise LLMError("免费翻译暂不可用（" + " ".join(errors) + "），可在设置里配置大模型")
 
     def test_connection(self) -> str:
         r = self.translate("hello", "zh-CN")

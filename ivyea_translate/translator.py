@@ -238,7 +238,9 @@ class BlockTranslateWorker(QThread):
                 continue
             try:
                 if getattr(self._client, "is_free", False):
-                    result = self._client.translate(text, self._target_language)
+                    result = self._client.translate(
+                        text, self._target_language,
+                        should_abort=lambda: self._cancelled)
                 else:
                     messages = build_messages(text, self._target_language, self._style)
                     result = "".join(self._client.stream_chat(messages))
@@ -293,8 +295,10 @@ class TranslateWorker(QThread):
                     self.finished_ok.emit(cached)
                     return
             if self._messages is None and getattr(self._client, "is_free", False):
-                # 免费引擎：非流式，一次返回整段
-                result = self._client.translate(self._text, self._target_language)
+                # 免费引擎：非流式，一次返回整段；弹窗被关就别把回退链跑完
+                result = self._client.translate(
+                    self._text, self._target_language,
+                    should_abort=lambda: self._cancelled)
                 if self._cancelled:
                     return
                 self.chunk.emit(result)

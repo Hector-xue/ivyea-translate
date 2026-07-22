@@ -71,6 +71,62 @@ def test_engine_default_is_auto(tmp_path):
     assert cfg.get("translate.engine") == "auto"
 
 
+# ---------- 回退链：取消即弃、失败冷却、成功记优先（假端点，不触网） ----------
+
+@pytest.fixture()
+def fake_engines(monkeypatch):
+    """把模块级 _ENGINES 换成可编程假端点，记录调用顺序。"""
+    from ivyea_translate import free_engine as fe
+
+    calls = []
+
+    def make(name, result=None, error=None):
+        def fn(text, target):
+            calls.append(name)
+            if error:
+                raise error
+            return result
+        return (name, fn)
+
+    def install(engines):
+        monkeypatch.setattr(fe, "_ENGINES", engines)
+
+    return calls, make, install
+
+
+def test_fallback_records_cooldown_and_preferred(fake_engines):
+    calls, make, install = fake_engines
+    install([make("a", error=LLMError("boom")), make("b", result="好")])
+    eng = FreeEngine()
+    assert eng.translate("hi", "zh-CN") == "好"
+    assert calls == ["a", "b"]
+    assert eng.preferred == "b"
+    assert eng._cooldown.get("a", 0) > 0     # 失败端点进冷却
+    calls.clear()
+    eng.translate("hi2", "zh-CN")
+    assert calls == ["b"]                     # 冷却+优先：直接命中 b
+
+
+def test_translate_aborts_between_engines_when_cancelled(fake_engines):
+    """弹窗被点关后 should_abort=True：不再往下试端点，立刻放弃。"""
+    calls, make, install = fake_engines
+    install([make("a", error=LLMError("boom")), make("b", result="好")])
+    eng = FreeEngine()
+    flips = iter([False, True])   # 试完 a 后取消
+    with pytest.raises(LLMError, match="已取消"):
+        eng.translate("hi", "zh-CN", should_abort=lambda: next(flips))
+    assert calls == ["a"]         # b 没被浪费
+
+
+def test_translate_cancelled_before_start_touches_nothing(fake_engines):
+    calls, make, install = fake_engines
+    install([make("a", result="好")])
+    eng = FreeEngine()
+    with pytest.raises(LLMError, match="已取消"):
+        eng.translate("hi", "zh-CN", should_abort=lambda: True)
+    assert calls == []
+
+
 def test_worker_uses_free_engine_nonstreaming(qapp):
     """免费引擎走非流式：chunk 一次给全量，finished_ok 给同一全量。"""
     import time
@@ -80,7 +136,7 @@ def test_worker_uses_free_engine_nonstreaming(qapp):
     class FakeFree:
         is_free = True
 
-        def translate(self, text, target_language):
+        def translate(self, text, target_language, should_abort=None):
             return f"[{target_language}]{text}"
 
     got = {}
