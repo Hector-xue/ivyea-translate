@@ -273,6 +273,14 @@ class Backdrop(QWidget):
                 p.drawPixmap(0, 0, self._baked)
                 p.setOpacity(1.0)
             self._engine.draw(p, w, h)
+            # 动效是画在底图之上的：藤蔓长着长着就爬过标题栏，把字标和窗口按钮盖住
+            # （底图里那道顶部压深挡不住后画的东西）。这里再补一道，只压最上面一条。
+            r, g, bl, _a = theme.BACKDROP_VEIL
+            top = QLinearGradient(0, 0, 0, 46)
+            top.setColorAt(0.0, QColor(r, g, bl, 190))
+            top.setColorAt(0.55, QColor(r, g, bl, 120))
+            top.setColorAt(1.0, QColor(r, g, bl, 0))
+            p.fillRect(QRectF(0, 0, w, 46), top)
         p.end()
 
         if _DEBUG:

@@ -159,3 +159,37 @@ def test_switch_between_solid_and_photo_theme_syncs_timer(qapp):
     bd.reload()
     assert not bd._timer.isActive(), "换到纯色主题要停表"
     host.close()
+
+
+def test_card_opacity_override():
+    """前景透明度是全局设置：换主题要保留，复位要回到各主题默认值。"""
+    theme.apply("ivy")
+    default = theme.card_opacity()
+    assert "rgba" in theme.CARD_BG
+
+    theme.set_card_opacity(0.62)
+    assert theme.card_opacity() == 0.62
+    assert "0.62" in theme.CARD_BG
+    assert theme.ACCENT in theme.app_qss()
+
+    theme.apply("midnight")           # 换主题不该把用户调的值冲掉
+    assert theme.card_opacity() == 0.62
+    assert "0.62" in theme.CARD_BG
+
+    theme.set_card_opacity(None)      # 复位回主题默认
+    theme.apply("ivy")
+    assert theme.card_opacity() == default
+
+    theme.set_card_opacity(0.1)       # 越界要夹住，别让卡片透没了
+    assert theme.card_opacity() == 0.55
+    theme.set_card_opacity(None)
+
+
+def test_opacity_does_not_leak_into_popup_or_fields():
+    """弹窗常年浮在别人家窗口上、输入框要和卡片分层：都不跟着透。"""
+    theme.apply("ivy")
+    popup_before, field_before = theme.POPUP_BG, theme.FIELD_BG
+    theme.set_card_opacity(0.55)
+    assert theme.POPUP_BG == popup_before
+    assert theme.FIELD_BG == field_before
+    theme.set_card_opacity(None)

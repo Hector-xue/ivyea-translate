@@ -100,6 +100,7 @@ class TranslateApp(QApplication):
         self.setQuitOnLastWindowClosed(False)
         # 配置要先读：全局 QSS 取决于用户选的主题
         self.cfg = Config()
+        theme.set_card_opacity(self.cfg.get("ui.card_opacity", None))
         theme.apply(self.cfg.get("ui.theme", theme.DEFAULT_THEME))
         self.setStyleSheet(theme.app_qss())
         self.setWindowIcon(_make_icon())

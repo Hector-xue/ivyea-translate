@@ -121,6 +121,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "theme": "ivy",
         "theme_motion": True,     # 背景与横幅的动效（关掉只留静态实拍图，零 CPU）
         "theme_banner": True,     # 标题栏下的主题横幅
+        # 前景（卡片）不透明度 0.55~1.0；null = 跟随各主题的默认值
+        "card_opacity": None,
     },
     "update": {
         "auto_check": True,

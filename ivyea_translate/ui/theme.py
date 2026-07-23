@@ -115,8 +115,8 @@ _THEMES: Dict[str, dict] = {
     },
     "cyber": {
         "label": "赛博",
-        "slogan": "夜里也在翻译",
-        "sub": "霓虹之下，语言不过是另一种电流",
+        "slogan": "越夜越清醒",
+        "sub": "招牌亮到天明，你的词句也不必打烊",
         "motion": "neon",
         "dark": True,
         "accent": "#2DE2E6", "accent_hover": "#5AEFF2", "accent_pressed": "#1FC5C9",
@@ -133,8 +133,8 @@ _THEMES: Dict[str, dict] = {
     },
     "alpine": {
         "label": "雪山",
-        "slogan": "清晨第一缕光",
-        "sub": "像晨雾散开那样，把意思看清楚",
+        "slogan": "日照金山",
+        "sub": "第一缕光落在山尖，你要的那个词也刚好落下来",
         "motion": "fog",
         "dark": False,
         "accent": "#3E7FA8", "accent_hover": "#356E92", "accent_pressed": "#2C5C7C",
@@ -144,16 +144,16 @@ _THEMES: Dict[str, dict] = {
         "field": "#F6FAFD", "field_border": "#DCE6EF",
         "shadow": (30, 48, 62),
         "veil": (250, 253, 255, 0.74),
-        "veil_top": 0.18,
-        "bg_focus": 0.46,
+        "veil_top": 0.14,
+        "bg_focus": 0.05,
         "blur": 2, "card_alpha": 0.93,
         "hero_ink": "#FFFFFF", "hero_sub": "#DCEBF7",
     },
     # ---- 两套纯色主题：不用照片、不跑动效，要的就是安静 ----
     "mint": {
         "label": "清绿",
-        "slogan": "随手即译",
-        "sub": "一点品牌绿，安静地待在一边",
+        "slogan": "青绿一寸",
+        "sub": "不喧哗，把整面窗留给你的字",
         "motion": "",
         "photo": False,
         "dark": False,
@@ -170,8 +170,8 @@ _THEMES: Dict[str, dict] = {
     },
     "midnight": {
         "label": "墨夜",
-        "slogan": "安静地读，安静地译",
-        "sub": "不刺眼的深色，盯一整天也不累",
+        "slogan": "长夜无扰",
+        "sub": "熄了灯的房间里，只剩一盏读得清的光",
         "motion": "",
         "photo": False,
         "dark": True,
@@ -190,6 +190,9 @@ _THEMES: Dict[str, dict] = {
 
 DEFAULT_THEME = "ivy"
 _ACTIVE = DEFAULT_THEME
+#: 用户在设置里调的前景不透明度（None=各主题自己的默认值）。
+#: 卡片透明一点能看见背景照片，不透明一点看字更省力，众口难调，交给用户。
+_CARD_OPACITY: Optional[float] = None
 
 
 def theme_keys() -> List[str]:
@@ -286,7 +289,31 @@ def apply(key: str) -> str:
         key = DEFAULT_THEME
     _ACTIVE = key
     globals().update(_tokens(key))
+    _apply_card_opacity()
     return key
+
+
+def card_opacity() -> float:
+    """当前生效的前景不透明度。"""
+    if _CARD_OPACITY is not None:
+        return _CARD_OPACITY
+    return float(_THEMES[_ACTIVE].get("card_alpha", 1.0))
+
+
+def set_card_opacity(value: Optional[float]) -> None:
+    """设置前景不透明度（0.55~1.0）；None = 回到各主题的默认值。"""
+    global _CARD_OPACITY
+    _CARD_OPACITY = None if value is None else max(0.55, min(1.0, float(value)))
+    _apply_card_opacity()
+
+
+def _apply_card_opacity() -> None:
+    """只改卡片一层：输入框、弹窗不跟着透——弹窗常年浮在别人家窗口上，
+    透了就看不清；输入框透了会和卡片糊成一片，层次就没了。"""
+    card = _THEMES[_ACTIVE]["card"]
+    alpha = card_opacity()
+    globals()["CARD_BG"] = _rgba(card, alpha)
+    globals()["GLASS_CARD"] = _rgba(card, alpha)
 
 
 # ---- 尺寸类常量与主题无关 ----
@@ -529,6 +556,31 @@ QComboBox QAbstractItemView::item:hover {{
 QComboBox QAbstractItemView::item:selected {{
     background: {ACCENT};
     color: {"#0B1020" if IS_DARK else "white"};
+}}
+/* ---- 滑块（前景透明度）：默认样式是系统蓝，和任何一套主题都不搭 ---- */
+QSlider::groove:horizontal {{
+    height: 4px;
+    background: {FIELD_BORDER};
+    border-radius: 2px;
+}}
+QSlider::sub-page:horizontal {{
+    background: {ACCENT};
+    border-radius: 2px;
+}}
+QSlider::add-page:horizontal {{
+    background: {FIELD_BORDER};
+    border-radius: 2px;
+}}
+QSlider::handle:horizontal {{
+    width: 12px;
+    height: 12px;
+    margin: -5px 0;
+    border-radius: 7px;
+    background: {CARD_BG};
+    border: 2px solid {ACCENT};
+}}
+QSlider::handle:horizontal:hover {{
+    background: {ACCENT_SOFT};
 }}
 QCheckBox {{
     spacing: 8px;

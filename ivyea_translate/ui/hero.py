@@ -10,7 +10,8 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QRadialGradient
+from PySide6.QtGui import (QColor, QFont, QLinearGradient, QPainter, QPixmap,
+                           QRadialGradient)
 from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
 
 from . import theme
@@ -94,13 +95,26 @@ class HeroBanner(QWidget):
             p.drawEllipse(QPointF(0.0, 0.0), radius, radius)
             p.restore()
         else:
-            # 纯色主题：没有照片可压，改成一层极淡的品牌色氛围，右侧化开
+            # 纯色主题：没有照片可压，改成一层极淡的品牌色氛围。
+            # 关键是**竖直方向也要化开**——只做横向渐变的话，色块底边又是一刀切，
+            # 横幅照样变成一个贴上去的方块。
             accent = QColor(theme.ACCENT)
-            wash = QLinearGradient(0, 0, w * 0.8, h)
-            wash.setColorAt(0.0, QColor(accent.red(), accent.green(), accent.blue(),
-                                        26 if not theme.IS_DARK else 34))
-            wash.setColorAt(1.0, QColor(accent.red(), accent.green(), accent.blue(), 0))
-            p.fillRect(self.rect(), wash)
+            peak = 30 if not theme.IS_DARK else 40
+            band = QPixmap(max(1, w), max(1, h))
+            band.fill(Qt.transparent)
+            bp = QPainter(band)
+            side = QLinearGradient(0, 0, w * 0.85, 0)
+            side.setColorAt(0.0, QColor(accent.red(), accent.green(), accent.blue(), peak))
+            side.setColorAt(1.0, QColor(accent.red(), accent.green(), accent.blue(), 0))
+            bp.fillRect(0, 0, w, h, side)
+            bp.setCompositionMode(QPainter.CompositionMode_DestinationIn)
+            fade = QLinearGradient(0, 0, 0, h)
+            fade.setColorAt(0.0, QColor(0, 0, 0, 255))
+            fade.setColorAt(0.55, QColor(0, 0, 0, 235))
+            fade.setColorAt(1.0, QColor(0, 0, 0, 0))   # 底边化到 0，不留边
+            bp.fillRect(0, 0, w, h, fade)
+            bp.end()
+            p.drawPixmap(0, 0, band)
 
         family = theme.FONT_FAMILY.split(",")[0].strip('"')
         title = QFont(family)

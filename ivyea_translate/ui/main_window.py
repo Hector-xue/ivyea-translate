@@ -1088,26 +1088,47 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         grid.setVerticalSpacing(8)
         self._theme_chips = {}
         active = theme.current()
+        cols = 4               # 八套主题正好两行，排三列会剩下两个孤零零地吊在第三行
         for i, key in enumerate(theme.theme_keys()):
             chip = _ThemeChip(key)
             chip.picked.connect(self._on_theme_picked)
             chip.set_selected(key == active)
             self._theme_chips[key] = chip
-            grid.addWidget(chip, i // 3, i % 3)
-        grid.setColumnStretch(3, 1)  # 卡片靠左，右侧留白不被拉伸
+            grid.addWidget(chip, i // cols, i % cols)
         v.addLayout(grid)
 
+        # 三个选项并排一行：两个开关 + 前景透明度
         opts = QHBoxLayout()
+        opts.setSpacing(14)
         self.motion_check = QCheckBox("启用动效")
-        self.motion_check.setToolTip("关掉后背景与横幅只保留静态实拍图，完全不占 CPU")
+        self.motion_check.setToolTip("关掉后背景只保留静态实拍图，完全不占 CPU")
         self.motion_check.setChecked(bool(self.cfg.get("ui.theme_motion", True)))
         self.motion_check.toggled.connect(self._on_motion_toggled)
         opts.addWidget(self.motion_check)
-        opts.addSpacing(16)
         self.banner_check = QCheckBox("显示主题横幅")
         self.banner_check.setChecked(bool(self.cfg.get("ui.theme_banner", True)))
         self.banner_check.toggled.connect(self._on_banner_toggled)
         opts.addWidget(self.banner_check)
+
+        opts.addSpacing(6)
+        opacity_label = QLabel("前景透明度")
+        opts.addWidget(opacity_label)
+        from PySide6.QtWidgets import QSlider
+
+        self.opacity_slider = QSlider(Qt.Horizontal)
+        self.opacity_slider.setRange(55, 100)      # 低于 55% 卡片里的字就开始被背景干扰
+        self.opacity_slider.setSingleStep(1)
+        self.opacity_slider.setPageStep(5)
+        self.opacity_slider.setFixedWidth(132)
+        self.opacity_slider.setToolTip("卡片的不透明度：调低能看见背景照片，调高看字更省力")
+        saved = self.cfg.get("ui.card_opacity", None)
+        self.opacity_slider.setValue(int(round((saved if saved else theme.card_opacity()) * 100)))
+        self.opacity_slider.valueChanged.connect(self._on_opacity_changed)
+        opts.addWidget(self.opacity_slider)
+        self.opacity_value = QLabel(f"{self.opacity_slider.value()}%")
+        self.opacity_value.setObjectName("Hint")
+        self.opacity_value.setFixedWidth(38)
+        opts.addWidget(self.opacity_value)
         opts.addStretch(1)
         v.addLayout(opts)
 
@@ -1125,6 +1146,28 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         if app is not None:
             app.setStyleSheet(theme.app_qss())
         self.restyle()
+
+
+    def _on_opacity_changed(self, value: int) -> None:
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QApplication
+
+        self.opacity_value.setText(f"{value}%")
+        theme.set_card_opacity(value / 100.0)
+        app = QApplication.instance()
+        if app is not None:
+            app.setStyleSheet(theme.app_qss())
+        # 拖动时每帧都写盘没必要，停手 400ms 再存
+        timer = getattr(self, "_opacity_save_timer", None)
+        if timer is None:
+            timer = self._opacity_save_timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(self._save_opacity)
+        timer.start(400)
+
+    def _save_opacity(self) -> None:
+        self.cfg.set("ui.card_opacity", self.opacity_slider.value() / 100.0)
+        self.cfg.save()
 
     def _on_motion_toggled(self, on: bool) -> None:
         self.cfg.set("ui.theme_motion", bool(on))

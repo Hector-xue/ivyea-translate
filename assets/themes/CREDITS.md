@@ -1,7 +1,7 @@
 # 主题素材来源与授权
 
-六套主题的背景与精灵**全部是真实照片**，一律取自公有领域（Public domain）或 CC0，
-因此没有署名义务；本文件仍逐张留档，便于核对与追溯。
+六套照片主题的背景与精灵**全部是真实照片**，一律取自公有领域（Public domain）或 CC0，
+因此没有署名义务；本文件仍逐张留档，便于核对与追溯。另有「清绿」「墨夜」两套纯色主题，不含任何图片素材。
 
 程序对这些素材只做了常规加工：等比缩放、居中裁切、按亮度/天空色抠像、调整饱和与亮度。
 缩略图 `thumb.jpg` 由各主题的 `bg.jpg` 裁出；顶部横幅区域也是这张 `bg.jpg`
@@ -15,10 +15,10 @@
 | 星海 starfield | 背景底图 bg.jpg | NASA Unveils Celestial Fireworks as Official Hubble 25th Anniversary Image.jpg | Public domain | https://commons.wikimedia.org/wiki/File:NASA_Unveils_Celestial_Fireworks_as_Official_Hubble_25th_Anniversary_Image.jpg |
 | 樱花 sakura | 背景底图 bg.jpg | Prunus cerasoides phitsanulok Thailand พญาเสือโคร่ง พิษณุโลก.jpg | CC0 | https://commons.wikimedia.org/wiki/File:Prunus_cerasoides_phitsanulok_Thailand_%E0%B8%9E%E0%B8%8D%E0%B8%B2%E0%B9%80%E0%B8%AA%E0%B8%B7%E0%B8%AD%E0%B9%82%E0%B8%84%E0%B8%A3%E0%B9%88%E0%B8%87_%E0%B8%9E%E0%B8%B4%E0%B8%A9%E0%B8%93%E0%B8%B8%E0%B9%82%E0%B8%A5%E0%B8%81.jpg |
 | 樱花 sakura | 花瓣精灵 sprites/petal_*.png | Cherry Blossom.jpg | CC0 | https://commons.wikimedia.org/wiki/File:Cherry_Blossom.jpg |
-| 赛博 cyber | 背景底图 bg.jpg | Neon streets (Unsplash).jpg | CC0 | https://commons.wikimedia.org/wiki/File:Neon_streets_(Unsplash).jpg |
 | 赛博 cyber | 霓虹精灵 sprites/neon.png | Neon Dragon at Museum of Neon Art.jpg | CC0 | https://commons.wikimedia.org/wiki/File:Neon_Dragon_at_Museum_of_Neon_Art.jpg |
-| 雪山 alpine | 背景底图 bg.jpg | Fog over a national park (Unsplash).jpg | CC0 | https://commons.wikimedia.org/wiki/File:Fog_over_a_national_park_(Unsplash).jpg |
+| 赛博 cyber | 背景底图 bg.jpg | Hong Kong night street.jpg | CC0 | https://commons.wikimedia.org/wiki/File:Hong_Kong_night_street.jpg |
 | 雪山 alpine | 云雾精灵 sprites/fog.png | Fog Rolls Over Netstal (Unsplash).jpg | CC0 | https://commons.wikimedia.org/wiki/File:Fog_Rolls_Over_Netstal_(Unsplash).jpg |
+| 雪山 alpine | 背景底图 bg.jpg | Morning light on Electric Peak.jpg | Public domain | https://commons.wikimedia.org/wiki/File:Morning_light_on_Electric_Peak.jpg |
 
 ## 另有说明
 
@@ -26,4 +26,4 @@
   原图为 Wikimedia Commons 上 Andrikkos 拍摄的常春藤扫描件（公有领域）。
 - 爱国风的旗面 `sprites/flag.png` 由 Commons 的 `Flag of the People's Republic of China.svg`
   （官方旗面设计，公有领域）经服务端渲染为位图后缩放而来。
-- 素材经 Wikimedia Commons API 于 2026-07-22 获取，许可证字段取自各文件页的 `LicenseShortName`。
+- 素材经 Wikimedia Commons API 于 2026-07-22/23 获取，许可证字段取自各文件页的 `LicenseShortName`。
