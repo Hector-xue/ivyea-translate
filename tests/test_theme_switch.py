@@ -40,6 +40,10 @@ def test_unknown_theme_falls_back():
 
 @pytest.mark.parametrize("key", theme.theme_keys())
 def test_theme_assets_present(key):
+    if not theme.spec(key).get("photo", True):
+        # 纯色主题本来就没有照片：确认它也确实没引用照片资源
+        assert not theme.spec(key)["motion"]
+        return
     for name in ("bg.jpg", "thumb.jpg"):
         assert (ASSETS / key / name).exists(), f"{key}/{name} 缺失"
     assert theme.theme_asset("bg.jpg", key)
@@ -60,6 +64,8 @@ def test_backdrop_paints_every_theme(qapp, key):
         bd._tick()
     pm = bd.grab()
     assert pm.size() == QSize(420, 300)
+    if not theme.spec(key).get("photo", True):
+        return          # 纯色主题的底色由 Shell 的 QSS 渐变画，背景层本来就不画东西
     img = pm.toImage()
     colors = {img.pixel(x, y) for x in range(0, 420, 37) for y in range(0, 300, 29)}
     assert len(colors) > 3, f"{key} 背景层几乎是纯色，八成没画出来"
@@ -102,6 +108,9 @@ def test_sprites_load_for_every_motion(qapp):
     for key in theme.theme_keys():
         theme.apply(key)
         eng = motion_mod.build(theme.spec()["motion"])
+        if not theme.spec()["motion"]:
+            assert eng is None      # 纯色主题不跑动效
+            continue
         assert eng is not None
         eng.resize(320, 240)
         pm = QPixmap(320, 240)
@@ -112,3 +121,41 @@ def test_sprites_load_for_every_motion(qapp):
         eng.step(0.05, 320, 240)
         eng.draw(p, 320, 240)
         p.end()
+
+
+@pytest.mark.parametrize("key", [k for k in theme.theme_keys()
+                                 if not theme.spec(k).get("photo", True)])
+def test_solid_theme_never_starts_timer(qapp, key):
+    """纯色主题没有动效：定时器一次都不该起（否则就是每秒 30 次重画同一张图）。"""
+    from PySide6.QtWidgets import QWidget
+
+    theme.apply(key)
+    host = QWidget()
+    host.resize(320, 240)
+    host.show()
+    bd = Backdrop(host, motion_enabled=True)
+    bd.show()
+    assert bd._engine is None
+    assert not bd._timer.isActive()
+    bd.set_motion(True)              # 用户就算把动效开着，纯色主题也不该起表
+    assert not bd._timer.isActive()
+    host.close()
+
+
+def test_switch_between_solid_and_photo_theme_syncs_timer(qapp):
+    from PySide6.QtWidgets import QWidget
+
+    theme.apply("mint")
+    host = QWidget()
+    host.resize(320, 240)
+    host.show()
+    bd = Backdrop(host, motion_enabled=True)
+    bd.show()
+    assert not bd._timer.isActive()
+    theme.apply("ivy")
+    bd.reload()
+    assert bd._timer.isActive(), "换回有动效的主题后要把表重新起起来"
+    theme.apply("midnight")
+    bd.reload()
+    assert not bd._timer.isActive(), "换到纯色主题要停表"
+    host.close()

@@ -25,7 +25,7 @@ from . import theme
 
 FPS = 30
 FADE_CLARITY = 64     # 清晰→虚化的过渡带：可以慢慢化，不影响可读性
-VEIL_LEAD = 16        # 纱要在横幅结束"之前"就开始加厚…
+VEIL_LEAD = 62        # 纱从横幅下半段就开始加厚（拉得够长才不会自己成为一条横线）…
 VEIL_TRAIL = 14       # …并在页签文字之前走满，否则页签压在半透的照片上看不清
 _DEBUG = bool(os.environ.get("IVYEA_BACKDROP_DEBUG"))
 
@@ -73,12 +73,20 @@ class Backdrop(QWidget):
 
     def set_motion(self, on: bool) -> None:
         self._motion_enabled = bool(on)
-        if not on:
-            self._timer.stop()
-        elif self.isVisible():
+        self._sync_timer()
+        self.update()
+
+    def _sync_timer(self) -> None:
+        """定时器只在"开了动效 + 这套主题真有动效 + 控件可见"时才跑。
+
+        纯色主题没有动效引擎，早先这里照样把表开起来，等于每秒 30 次重画同一张图。
+        """
+        want = self._motion_enabled and self._engine is not None and self.isVisible()
+        if want and not self._timer.isActive():
             self._last = time.monotonic()
             self._timer.start()
-        self.update()
+        elif not want and self._timer.isActive():
+            self._timer.stop()
 
     def reload(self) -> None:
         """换主题：底图、烘焙层、动效引擎全部重建。"""
@@ -88,15 +96,14 @@ class Backdrop(QWidget):
         self._engine = motion_mod.build(theme.spec()["motion"])
         if self._engine is not None:
             self._engine.resize(self.width(), self.height())
+        self._sync_timer()      # 换到/换离纯色主题时，表要跟着停或起
         self.update()
 
     # ---------- 生命周期：不可见就停表 ----------
 
     def showEvent(self, event):
         super().showEvent(event)
-        if self._motion_enabled and self._engine is not None:
-            self._last = time.monotonic()
-            self._timer.start()
+        self._sync_timer()
 
     def hideEvent(self, event):
         self._timer.stop()

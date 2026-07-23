@@ -154,19 +154,49 @@ class _ThemeChip(QWidget):
         self.thumb.setFixedSize(128, 72)
         self.thumb.setScaledContents(True)
         self.thumb.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        path = theme.theme_asset("thumb.jpg", key)
-        if path:
-            from PySide6.QtGui import QPixmap
+        from PySide6.QtGui import QPixmap
 
-            pm = QPixmap(path)
-            if not pm.isNull():
-                self.thumb.setPixmap(pm)
+        path = theme.theme_asset("thumb.jpg", key)
+        pm = QPixmap(path) if path else QPixmap()
+        if pm.isNull():
+            pm = self._swatch(key)          # 纯色主题没有照片，画一枚配色小样
+        self.thumb.setPixmap(pm)
         v.addWidget(self.thumb, 0, Qt.AlignHCenter)
         self.name = QLabel(theme.theme_label(key))
         self.name.setObjectName("ThemeName")
         self.name.setAlignment(Qt.AlignCenter)
         self.name.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         v.addWidget(self.name)
+
+
+    @staticmethod
+    def _swatch(key: str) -> "QPixmap":
+        """纯色主题的预览小样：底色 + 一张卡 + 一枚主色药丸，一眼看出是什么调子。"""
+        from PySide6.QtCore import QRectF
+        from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPixmap
+
+        t = theme.spec(key)
+        w, h = 256, 144
+        pm = QPixmap(w, h)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        g = QLinearGradient(0, 0, w * 0.7, h)
+        b0, b1, b2 = t["base"]
+        g.setColorAt(0.0, QColor(b0))
+        g.setColorAt(0.55, QColor(b1))
+        g.setColorAt(1.0, QColor(b2))
+        p.fillRect(0, 0, w, h, g)
+        p.setBrush(QColor(t["card"]))
+        p.setPen(QColor(t["card_border"]))
+        p.drawRoundedRect(QRectF(26, 30, w - 52, h - 62), 12, 12)
+        p.setBrush(QColor(t["accent"]))
+        p.setPen(Qt.NoPen)
+        p.drawRoundedRect(QRectF(w - 104, h - 62, 60, 20), 10, 10)
+        p.setBrush(QColor(t["ink3"]))
+        p.drawRoundedRect(QRectF(46, 52, 96, 9), 4, 4)
+        p.drawRoundedRect(QRectF(46, 70, 140, 9), 4, 4)
+        p.end()
+        return pm
 
     def set_selected(self, on: bool) -> None:
         # 用 objectName 切换而不是动态属性：动态属性在 PySide6 里回读不稳，

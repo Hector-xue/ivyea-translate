@@ -9,8 +9,8 @@
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QRadialGradient
 from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
 
 from . import theme
@@ -50,11 +50,14 @@ class HeroBanner(QWidget):
         self.update()
 
     def _sync_btn_style(self) -> None:
-        # 按钮压在照片上，得用主题的横幅文字色才看得清
+        # 按钮压在照片上，得用主题的横幅文字色才看得清；
+        # 纯色主题底下没有压深，hover 用主色淡底，白底衬白是看不见的
+        hover_bg = ("rgba(255,255,255,0.20)" if getattr(theme, "HAS_PHOTO", True)
+                    else theme.ACCENT_SOFT)
         self.collapse_btn.setStyleSheet(
             f"QPushButton {{ color: {theme.HERO_SUB_INK}; background: transparent;"
             f" border: none; padding: 2px 8px; border-radius: 8px; font-size: 12px; }}"
-            f"QPushButton:hover {{ background: rgba(255,255,255,0.20);"
+            f"QPushButton:hover {{ background: {hover_bg};"
             f" color: {theme.HERO_INK}; }}"
         )
 
@@ -68,21 +71,36 @@ class HeroBanner(QWidget):
         p.setRenderHint(QPainter.Antialiasing, True)
         spec = theme.spec()
 
-        # 文案侧压深：左边压得住字，右边几乎不压，照片自己露出来。
-        # 底部不再画任何分割线——背景层已经用一段渐变把清晰度和纱一起化开了。
-        ink = QColor(theme.TEXT_PRIMARY) if not theme.IS_DARK else QColor(4, 6, 14)
-        base = QColor(ink.red() // 3, ink.green() // 3, ink.blue() // 3)
-        scrim = QLinearGradient(0, 0, w, 0)
-        scrim.setColorAt(0.0, QColor(base.red(), base.green(), base.blue(), 190))
-        scrim.setColorAt(0.52, QColor(base.red(), base.green(), base.blue(), 88))
-        scrim.setColorAt(1.0, QColor(base.red(), base.green(), base.blue(), 18))
-        p.fillRect(self.rect(), scrim)
-        # 上下再各化开一点，横幅这块压深就不会自己变成一个方框
-        soften = QLinearGradient(0, 0, 0, h)
-        soften.setColorAt(0.0, QColor(base.red(), base.green(), base.blue(), 30))
-        soften.setColorAt(0.45, QColor(base.red(), base.green(), base.blue(), 0))
-        soften.setColorAt(1.0, QColor(base.red(), base.green(), base.blue(), 0))
-        p.fillRect(self.rect(), soften)
+        photo = bool(getattr(theme, "HAS_PHOTO", True))
+        title_rect = QRectF(20, h * 0.18, w - 120, 30)
+        sub_rect = QRectF(21, h * 0.53, w - 120, 22)
+
+        if photo:
+            # 文案背后一团柔和的压深，四周自己化开。
+            # 之前是整块矩形填充，底边一刀切——横幅于是变成一个突兀的深色方框，
+            # 和照片没关系，纯粹是这层压深自己画出来的边。
+            ink = QColor(theme.TEXT_PRIMARY) if not theme.IS_DARK else QColor(4, 6, 14)
+            base = QColor(ink.red() // 3, ink.green() // 3, ink.blue() // 3)
+            radius = max(240.0, w * 0.52)
+            p.save()
+            p.translate(0.0, h * 0.46)
+            p.scale(1.0, (h * 0.95) / max(1.0, radius * 2))   # 压扁成横向椭圆
+            g = QRadialGradient(0.0, 0.0, radius)
+            g.setColorAt(0.0, QColor(base.red(), base.green(), base.blue(), 205))
+            g.setColorAt(0.55, QColor(base.red(), base.green(), base.blue(), 96))
+            g.setColorAt(1.0, QColor(base.red(), base.green(), base.blue(), 0))
+            p.setBrush(g)
+            p.setPen(Qt.NoPen)
+            p.drawEllipse(QPointF(0.0, 0.0), radius, radius)
+            p.restore()
+        else:
+            # 纯色主题：没有照片可压，改成一层极淡的品牌色氛围，右侧化开
+            accent = QColor(theme.ACCENT)
+            wash = QLinearGradient(0, 0, w * 0.8, h)
+            wash.setColorAt(0.0, QColor(accent.red(), accent.green(), accent.blue(),
+                                        26 if not theme.IS_DARK else 34))
+            wash.setColorAt(1.0, QColor(accent.red(), accent.green(), accent.blue(), 0))
+            p.fillRect(self.rect(), wash)
 
         family = theme.FONT_FAMILY.split(",")[0].strip('"')
         title = QFont(family)
@@ -90,13 +108,21 @@ class HeroBanner(QWidget):
         title.setBold(True)
         title.setLetterSpacing(QFont.PercentageSpacing, 103)
         p.setFont(title)
+        if photo:
+            # 压深收窄之后，字自己带一点点投影才在任何照片上都立得住
+            p.setPen(QColor(0, 0, 0, 90))
+            p.drawText(title_rect.translated(0.6, 1.0), Qt.AlignLeft | Qt.AlignVCenter,
+                       spec["slogan"])
         p.setPen(QColor(theme.HERO_INK))
-        p.drawText(QRectF(20, h * 0.18, w - 120, 30), Qt.AlignLeft | Qt.AlignVCenter,
-                   spec["slogan"])
+        p.drawText(title_rect, Qt.AlignLeft | Qt.AlignVCenter, spec["slogan"])
+
         sub = QFont(family)
         sub.setPixelSize(12)
         p.setFont(sub)
+        if photo:
+            p.setPen(QColor(0, 0, 0, 70))
+            p.drawText(sub_rect.translated(0.5, 0.8), Qt.AlignLeft | Qt.AlignVCenter,
+                       spec["sub"])
         p.setPen(QColor(theme.HERO_SUB_INK))
-        p.drawText(QRectF(21, h * 0.53, w - 120, 22), Qt.AlignLeft | Qt.AlignVCenter,
-                   spec["sub"])
+        p.drawText(sub_rect, Qt.AlignLeft | Qt.AlignVCenter, spec["sub"])
         p.end()
