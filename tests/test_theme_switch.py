@@ -193,3 +193,60 @@ def test_opacity_does_not_leak_into_popup_or_fields():
     assert theme.POPUP_BG == popup_before
     assert theme.FIELD_BG == field_before
     theme.set_card_opacity(None)
+
+
+def test_inplace_frame_follows_theme(qapp):
+    """原位翻译的选区外框必须跟主题色走。
+
+    这里原来写死了品牌绿的 RGB：框选时（capture_overlay）边框是主题色，
+    一松手切到原位层就跳回绿色，同一个动作两种颜色。
+    """
+    from PySide6.QtCore import QRect
+    from PySide6.QtGui import QColor, QPixmap
+
+    from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
+
+    shot = QPixmap(400, 200)
+    shot.fill(QColor("#FFFFFF"))
+
+    seen = {}
+    for key in ("ivy", "patriot", "starfield"):
+        theme.apply(key)
+        ov = InPlaceOverlay(QRect(0, 0, 400, 200), shot, 1.0)
+        ov._frame_alpha = 255
+        pm = ov.grab()
+        img = pm.toImage()
+        want = QColor(theme.ACCENT)
+        # 沿上边框扫一遍，找与主题色接近的像素（外框是 1.5px 抗锯齿描边）
+        hit = False
+        for x in range(0, img.width()):
+            for y in range(0, 6):
+                c = img.pixelColor(x, y)
+                if (abs(c.red() - want.red()) < 42 and abs(c.green() - want.green()) < 42
+                        and abs(c.blue() - want.blue()) < 42 and c.alpha() > 60):
+                    hit = True
+                    break
+            if hit:
+                break
+        seen[key] = hit
+        ov.deleteLater()
+    assert all(seen.values()), f"外框没跟着主题色走：{seen}"
+
+
+def test_titlebar_ink_flips_on_dark_photo(qapp):
+    """标题栏压在照片上：夜景要浅色字，叶丛要深色字。"""
+    from ivyea_translate.config import Config
+    from ivyea_translate.ui.main_window import MainWindow
+
+    theme.apply("ivy")
+    win = MainWindow(Config())
+    win.resize(720, 560)
+    win.show()
+    win._on_theme_picked("starfield")      # 星云是暗的
+    win._sync_titlebar_ink()
+    assert "#F4F7FB" in win.titlebar.styleSheet()
+    win._on_theme_picked("sakura")         # 樱花是亮的
+    win._sync_titlebar_ink()
+    assert "#F4F7FB" not in win.titlebar.styleSheet()
+    win.really_quit = True
+    win.close()

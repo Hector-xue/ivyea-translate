@@ -1149,23 +1149,63 @@ class MainWindow(ShellWindowMixin, QMainWindow):
 
 
     def _on_opacity_changed(self, value: int) -> None:
-        from PySide6.QtCore import QTimer
-        from PySide6.QtWidgets import QApplication
+        """拖动时只重刷**当前这一页可见的几张卡片**，不碰全局 QSS。
 
-        self.opacity_value.setText(f"{value}%")
+        Qt 的样式表是"设在哪个控件上，就把那棵子树整个重新 polish 一遍"：
+        往 QApplication 上设 = 全窗控件重算（实测 295ms/格），往 MainWindow 上设
+        也还有 81ms/格，拖起来一顿一顿。只给可见的 GlassCard 各自设一条背景规则，
+        重算范围就缩到那几张卡里，实测降到个位数毫秒；松手后再统一刷一次全局 QSS，
+        把页签选中态、历史条目这些同样用卡片色的地方补齐。
+        """
+        self.opacity_value.setText(f"{value}%")   # 数字永远跟手，重画才限流
+        now = time.monotonic()
+        if now - getattr(self, "_opacity_last_paint", 0.0) < 0.06:
+            # 60ms 内不重复重刷：鼠标每移动一像素就发一次 valueChanged，
+            # 而重刷一次要 20ms 上下，来一次刷一次必然拖不动
+            self._schedule_opacity_repaint()
+            return
+        self._opacity_last_paint = now
+        self._paint_opacity(value)
+
+    def _schedule_opacity_repaint(self) -> None:
+        """限流期间丢掉的那次，用一个短定时器补上，保证最后停在哪就是哪。"""
+        from PySide6.QtCore import QTimer
+
+        timer = getattr(self, "_opacity_paint_timer", None)
+        if timer is None:
+            timer = self._opacity_paint_timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(
+                lambda: self._paint_opacity(self.opacity_slider.value()))
+        if not timer.isActive():
+            timer.start(60)
+
+    def _paint_opacity(self, value: int) -> None:
+        from PySide6.QtCore import QTimer
+
+        self._opacity_last_paint = time.monotonic()
         theme.set_card_opacity(value / 100.0)
-        app = QApplication.instance()
-        if app is not None:
-            app.setStyleSheet(theme.app_qss())
-        # 拖动时每帧都写盘没必要，停手 400ms 再存
+        rule = (f"QWidget#GlassCard {{ background: {theme.CARD_BG};"
+                f" border: 1px solid {theme.CARD_BORDER};"
+                f" border-radius: {theme.RADIUS}px; }}")
+        for card in self.findChildren(QWidget, "GlassCard"):
+            if card.isVisible():
+                card.setStyleSheet(rule)
         timer = getattr(self, "_opacity_save_timer", None)
         if timer is None:
             timer = self._opacity_save_timer = QTimer(self)
             timer.setSingleShot(True)
-            timer.timeout.connect(self._save_opacity)
-        timer.start(400)
+            timer.timeout.connect(self._commit_opacity)
+        timer.start(260)      # 停手 260ms：落盘 + 全局样式补齐
 
-    def _save_opacity(self) -> None:
+    def _commit_opacity(self) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        for card in self.findChildren(QWidget, "GlassCard"):
+            card.setStyleSheet("")        # 撤掉拖动期间的局部覆盖
+        app = QApplication.instance()
+        if app is not None:
+            app.setStyleSheet(theme.app_qss())
         self.cfg.set("ui.card_opacity", self.opacity_slider.value() / 100.0)
         self.cfg.save()
 
@@ -1180,6 +1220,13 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         self.cfg.save()
         self.hero.setVisible(bool(on))
         self._sync_backdrop_band()
+
+    def _sync_titlebar_ink(self) -> None:
+        """标题栏压在背景照片上，字的深浅按实测明暗定（纯色主题跟随主题本身）。"""
+        if not getattr(theme, "HAS_PHOTO", True):
+            self.titlebar.set_ink(bool(theme.IS_DARK))
+            return
+        self.titlebar.set_ink(self.backdrop.top_luma() < 0.62)
 
     def _sync_backdrop_band(self) -> None:
         """背景照片"留清晰"的那一段 = 标题栏 + 横幅（横幅收起时只剩标题栏）。"""
@@ -1204,6 +1251,7 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         self.backdrop.reload()
         self._sync_backdrop_band()
         self.hero.reload()
+        self._sync_titlebar_ink()
         for key, chip in getattr(self, "_theme_chips", {}).items():
             chip.set_selected(key == theme.current())
         if hasattr(self, "email_backtrans"):
@@ -1333,6 +1381,7 @@ class MainWindow(ShellWindowMixin, QMainWindow):
     def showEvent(self, event):
         super().showEvent(event)
         self._sync_shell_state()  # 最大化状态下显示时收掉投影留白与圆角
+        self._sync_titlebar_ink()  # 底图这时才按真实尺寸烘焙出来，明暗要重新量
 
     # 关窗只是隐藏（常驻托盘）；退出流程中必须放行
     def closeEvent(self, event):

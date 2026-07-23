@@ -41,6 +41,7 @@ class Backdrop(QWidget):
         self._bg: Optional[QPixmap] = None
         self._bg_token = ()
         self._band = 0        # 顶部清晰段高度，由 MainWindow 按标题栏+横幅算好传进来
+        self._top_luma = 1.0  # 标题栏那条的平均明暗，决定字标用深色还是浅色
         self._baked: Optional[QPixmap] = None
         self._engine = motion_mod.build(theme.spec()["motion"])
         self._last = time.monotonic()
@@ -218,15 +219,41 @@ class Backdrop(QWidget):
 
         # 标题栏那条 38px 是透明的，底下要是恰好压着照片的暗部，字标和
         # 最小化/关闭按钮就糊进去了 —— 顶部再压一道同色渐变保证可读
-        scrim = QLinearGradient(0, 0, 0, 52 * dpr)
-        scrim.setColorAt(0.0, QColor(r, gc, b, 215))
-        scrim.setColorAt(0.62, QColor(r, gc, b, 110))
+        # 拉长压薄：原来是 52px 内压到 215 alpha，浅色主题下就成了一条"没图"的白带。
+        # 现在改成 96px 的缓坡（顶端 132），读起来像光从上面打下来，而不是贴了条白纸。
+        # 字看不看得清不靠这层解决——顶栏文字会按背景明暗自动换深浅（见 top_luma）。
+        scrim = QLinearGradient(0, 0, 0, 96 * dpr)
+        scrim.setColorAt(0.0, QColor(r, gc, b, 132))
+        scrim.setColorAt(0.55, QColor(r, gc, b, 62))
         scrim.setColorAt(1.0, QColor(r, gc, b, 0))
-        cp.fillRect(0, 0, tw, int(52 * dpr), scrim)
+        cp.fillRect(0, 0, tw, int(96 * dpr), scrim)
         cp.end()
 
         canvas.setDevicePixelRatio(dpr)
         self._bg = canvas
+        self._top_luma = self._measure_top_luma(canvas, dpr)
+
+    @staticmethod
+    def _measure_top_luma(canvas: QPixmap, dpr: float) -> float:
+        """标题栏那条的平均明暗（0=黑 1=白）。
+
+        照片主题下这条是透明的，字直接压在照片上：夜景要用浅色字、叶丛要用深色字，
+        一刀切必然有一头看不清。取样而不是拍脑袋。
+        """
+        img = canvas.toImage()
+        band = max(1, int(38 * dpr))
+        total = n = 0
+        step = max(1, img.width() // 60)
+        for y in range(0, band, max(1, band // 6)):
+            for x in range(0, img.width(), step):
+                c = img.pixelColor(x, y)
+                total += 0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue()
+                n += 1
+        return (total / max(1, n)) / 255.0
+
+    def top_luma(self) -> float:
+        self._ensure_bg()
+        return getattr(self, "_top_luma", 1.0 if not theme.IS_DARK else 0.0)
 
     def _ensure_baked(self) -> Optional[QPixmap]:
         if self._baked is not None:
@@ -276,11 +303,11 @@ class Backdrop(QWidget):
             # 动效是画在底图之上的：藤蔓长着长着就爬过标题栏，把字标和窗口按钮盖住
             # （底图里那道顶部压深挡不住后画的东西）。这里再补一道，只压最上面一条。
             r, g, bl, _a = theme.BACKDROP_VEIL
-            top = QLinearGradient(0, 0, 0, 46)
-            top.setColorAt(0.0, QColor(r, g, bl, 190))
-            top.setColorAt(0.55, QColor(r, g, bl, 120))
+            top = QLinearGradient(0, 0, 0, 44)
+            top.setColorAt(0.0, QColor(r, g, bl, 120))
+            top.setColorAt(0.6, QColor(r, g, bl, 70))
             top.setColorAt(1.0, QColor(r, g, bl, 0))
-            p.fillRect(QRectF(0, 0, w, 46), top)
+            p.fillRect(QRectF(0, 0, w, 44), top)
         p.end()
 
         if _DEBUG:

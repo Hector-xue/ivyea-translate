@@ -105,6 +105,26 @@ class TitleBar(QWidget):
             for b in (self.min_btn, self.max_btn, self.close_btn):
                 lay.addWidget(b)
 
+    def set_ink(self, light: bool) -> None:
+        """标题栏文字用浅色还是深色。
+
+        照片主题下标题栏是透明的，字直接压在照片上：夜景/星空得用浅色字，
+        叶丛/樱花得用深色字。由 MainWindow 按背景实测明暗来调，不是猜的。
+        """
+        ink = "#F4F7FB" if light else theme.TEXT_PRIMARY
+        sub = "rgba(244, 247, 251, 0.72)" if light else theme.TEXT_SECONDARY
+        hover = "rgba(255,255,255,0.16)" if light else theme.WINBTN_HOVER_BG
+        self.setStyleSheet(
+            f"QLabel#Wordmark {{ color: {ink}; background: transparent; }}"
+            f"QLabel#Hint {{ color: {sub}; background: transparent; }}"
+            f"QPushButton#WinBtn {{ color: {sub}; background: transparent; border: none;"
+            f" border-radius: 7px; padding: 0; font-size: 13px; }}"
+            f"QPushButton#WinBtn:hover {{ background: {hover}; color: {ink}; }}"
+            f"QPushButton#WinBtnClose {{ color: {sub}; background: transparent; border: none;"
+            f" border-radius: 7px; padding: 0; font-size: 13px; }}"
+            f"QPushButton#WinBtnClose:hover {{ background: {theme.DANGER}; color: white; }}"
+        )
+
     def _win_button(self, glyph: str, tip: str) -> QPushButton:
         btn = QPushButton(glyph, self)
         btn.setObjectName("WinBtn")

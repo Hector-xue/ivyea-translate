@@ -483,7 +483,11 @@ class InPlaceOverlay(QWidget):
 
     def _paint_frame(self, p: QPainter, sel: QRect) -> None:
         """选区外框：静止时细描，loading 时随呼吸动画明暗。"""
-        p.setPen(QPen(QColor(107, 165, 63, self._frame_alpha), 1.5))
+        # 颜色必须现取主题色：这里原来写死了品牌绿的 RGB，于是框选时边框是主题色、
+        # 一松手换成原位层就跳回绿色
+        accent = QColor(theme.ACCENT)
+        accent.setAlpha(self._frame_alpha)
+        p.setPen(QPen(accent, 1.5))
         p.setBrush(Qt.NoBrush)
         p.drawRoundedRect(QRectF(sel).adjusted(0.75, 0.75, -0.75, -0.75), 6, 6)
 

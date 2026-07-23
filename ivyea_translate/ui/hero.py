@@ -139,4 +139,10 @@ class HeroBanner(QWidget):
                        spec["sub"])
         p.setPen(QColor(theme.HERO_SUB_INK))
         p.drawText(sub_rect, Qt.AlignLeft | Qt.AlignVCenter, spec["sub"])
+
+        if not photo:
+            # 纯色主题没有照片可以"渐渐化开"，横幅和内容区必须有个交代：
+            # 在横幅最底下压一条细分界线（照片主题不画，那边靠虚化过渡本身分层）
+            line = QColor(theme.CARD_BORDER)
+            p.fillRect(QRectF(0, h - 1, w, 1), line)
         p.end()
