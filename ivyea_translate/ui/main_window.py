@@ -267,6 +267,7 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         self.hero.collapse_requested.connect(self._collapse_hero)
         self.hero.setVisible(bool(cfg.get("ui.theme_banner", True)))
         outer.addWidget(self.hero)
+        self._sync_backdrop_band()
 
         body = QWidget()
         body.setMouseTracking(True)
@@ -1080,10 +1081,6 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         opts.addStretch(1)
         v.addLayout(opts)
 
-        tip = QLabel("背景与横幅均为公有领域 / CC0 实拍照片，逐张来源见 assets/themes/CREDITS.md")
-        tip.setObjectName("Hint")
-        tip.setWordWrap(True)
-        v.addWidget(tip)
         return card
 
     def _on_theme_picked(self, key: str) -> None:
@@ -1109,6 +1106,19 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         self.cfg.set("ui.theme_banner", bool(on))
         self.cfg.save()
         self.hero.setVisible(bool(on))
+        self._sync_backdrop_band()
+
+    def _sync_backdrop_band(self) -> None:
+        """背景照片"留清晰"的那一段 = 标题栏 + 横幅（横幅收起时只剩标题栏）。"""
+        from .hero import HERO_HEIGHT
+        from .titlebar import TITLEBAR_HEIGHT
+
+        band = TITLEBAR_HEIGHT + 6            # outer 布局给 Shell 顶部留的 6px
+        # 用 isHidden() 而不是 isVisible()：窗口还没 show 出来时 isVisible() 恒为 False，
+        # 构造阶段算出来的清晰段会少掉整条横幅（横幅于是被虚化，白写了）
+        if not self.hero.isHidden():
+            band += HERO_HEIGHT
+        self.backdrop.set_band(band)
 
     def _collapse_hero(self) -> None:
         if hasattr(self, "banner_check"):
@@ -1119,6 +1129,7 @@ class MainWindow(ShellWindowMixin, QMainWindow):
     def restyle(self) -> None:
         """换肤后刷新那些不走全局 QSS 的地方（内联样式 + 自绘层）。"""
         self.backdrop.reload()
+        self._sync_backdrop_band()
         self.hero.reload()
         for key, chip in getattr(self, "_theme_chips", {}).items():
             chip.set_selected(key == theme.current())

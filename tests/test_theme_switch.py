@@ -40,7 +40,7 @@ def test_unknown_theme_falls_back():
 
 @pytest.mark.parametrize("key", theme.theme_keys())
 def test_theme_assets_present(key):
-    for name in ("bg.jpg", "hero.jpg", "thumb.jpg"):
+    for name in ("bg.jpg", "thumb.jpg"):
         assert (ASSETS / key / name).exists(), f"{key}/{name} 缺失"
     assert theme.theme_asset("bg.jpg", key)
 

@@ -112,11 +112,14 @@ class IvyMotion(Motion):
         w, h = self._w, self._h
         if w <= 0 or h <= 0:
             return
-        for i in range(3):
-            x = w * self.rng.uniform(0.02 + 0.32 * i, 0.16 + 0.32 * i)
+        # 只从下缘和两侧往上爬：顶边垂下来的那根会横在标题栏上，像块随机的斑
+        for i in range(4):
+            x = w * self.rng.uniform(0.01 + 0.25 * i, 0.14 + 0.25 * i)
             self.vines.append(_Vine(x, h + 4, -math.pi / 2 + self.rng.uniform(-0.5, 0.5), self.rng))
-        self.vines.append(_Vine(w * self.rng.uniform(0.75, 0.95), -4,
-                                math.pi / 2 + self.rng.uniform(-0.4, 0.4), self.rng))
+        self.vines.append(_Vine(-4, h * self.rng.uniform(0.45, 0.8),
+                                -self.rng.uniform(0.3, 0.9), self.rng))
+        self.vines.append(_Vine(w + 4, h * self.rng.uniform(0.45, 0.8),
+                                math.pi + self.rng.uniform(0.3, 0.9), self.rng))
 
     # --- 生长：把新长出的茎与叶烘焙进 baked 层 ---
     def grow(self, p: QPainter, dt: float) -> bool:
@@ -332,10 +335,11 @@ class FlagMotion(Motion):
         p.setOpacity(1.0)
 
     def draw(self, p: QPainter, w: int, h: int) -> None:
-        # 旗面从右边缘垂下来，占大半个窗高，边缘羽化到看不出接缝
-        fh = h * 0.72
+        # 旗面垂在右下：顶部那段是照片最好看的地方（横幅文案也在那儿），
+        # 旗子压上去只会糊成一片暗红
+        fh = h * 0.62
         fw = fh * 1.5
-        self.draw_flag(p, QRectF(w - fw * 0.78, h * 0.05, fw, fh), opacity=0.32)
+        self.draw_flag(p, QRectF(w - fw * 0.74, h * 0.34, fw, fh), opacity=0.26)
         mote = self._mote()
         for m in self.motes:
             d = m["r"] * 6.4
