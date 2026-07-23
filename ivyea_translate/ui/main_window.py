@@ -1227,6 +1227,7 @@ class MainWindow(ShellWindowMixin, QMainWindow):
             self.titlebar.set_ink(bool(theme.IS_DARK))
             return
         self.titlebar.set_ink(self.backdrop.top_luma() < 0.62)
+        self.hero.set_ink(self.backdrop.band_luma() < 0.60)
 
     def _sync_backdrop_band(self) -> None:
         """背景照片"留清晰"的那一段 = 标题栏 + 横幅（横幅收起时只剩标题栏）。"""

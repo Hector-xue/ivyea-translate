@@ -42,6 +42,7 @@ class Backdrop(QWidget):
         self._bg_token = ()
         self._band = 0        # 顶部清晰段高度，由 MainWindow 按标题栏+横幅算好传进来
         self._top_luma = 1.0  # 标题栏那条的平均明暗，决定字标用深色还是浅色
+        self._band_luma = 1.0 # 横幅那一段的明暗，决定名句用深色还是浅色
         self._tint: Optional[QPixmap] = None      # 纯色主题的顶部色块（含标题栏那条）
         self._tint_token = ()
         self._baked: Optional[QPixmap] = None
@@ -236,21 +237,26 @@ class Backdrop(QWidget):
 
         canvas.setDevicePixelRatio(dpr)
         self._bg = canvas
-        self._top_luma = self._measure_top_luma(canvas, dpr)
+        self._top_luma = self._measure_luma(canvas, 0, int(38 * dpr))
+        # 横幅那一段（文字压在这儿）单独量一次：顶栏亮不代表横幅也亮
+        self._band_luma = self._measure_luma(
+            canvas, int(44 * dpr), int(max(45, self._band) * dpr), right=0.62)
 
     @staticmethod
-    def _measure_top_luma(canvas: QPixmap, dpr: float) -> float:
-        """标题栏那条的平均明暗（0=黑 1=白）。
+    def _measure_luma(canvas: QPixmap, y0: int, y1: int, right: float = 1.0) -> float:
+        """某一横条的平均明暗（0=黑 1=白）。
 
-        照片主题下这条是透明的，字直接压在照片上：夜景要用浅色字、叶丛要用深色字，
-        一刀切必然有一头看不清。取样而不是拍脑袋。
+        照片主题下标题栏和横幅都是透明的，字直接压在照片上：夜景要用浅色字、
+        叶丛要用深色字，一刀切必然有一头看不清。取样而不是拍脑袋。
+        `right` 限制取样宽度——文字只占左边一截，右边再亮也不该影响判断。
         """
         img = canvas.toImage()
-        band = max(1, int(38 * dpr))
+        y1 = max(y0 + 1, min(y1, img.height()))
+        w = max(1, int(img.width() * right))
         total = n = 0
-        step = max(1, img.width() // 60)
-        for y in range(0, band, max(1, band // 6)):
-            for x in range(0, img.width(), step):
+        step = max(1, w // 50)
+        for y in range(y0, y1, max(1, (y1 - y0) // 6)):
+            for x in range(0, w, step):
                 c = img.pixelColor(x, y)
                 total += 0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue()
                 n += 1
@@ -259,6 +265,11 @@ class Backdrop(QWidget):
     def top_luma(self) -> float:
         self._ensure_bg()
         return getattr(self, "_top_luma", 1.0 if not theme.IS_DARK else 0.0)
+
+    def band_luma(self) -> float:
+        """横幅那一段的明暗，决定名句用深色字还是浅色字。"""
+        self._ensure_bg()
+        return getattr(self, "_band_luma", self.top_luma())
 
     def _ensure_tint(self) -> Optional[QPixmap]:
         """纯色主题的顶部色块：从窗口最顶一直铺到横幅底部，只在底部化开。
