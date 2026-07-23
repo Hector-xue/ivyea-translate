@@ -85,6 +85,7 @@ class TitleBar(QWidget):
         f.setBold(True)
         f.setLetterSpacing(QFont.PercentageSpacing, 102)
         name.setFont(f)
+        self._wordmark = name
         lay.addWidget(name)
         lay.addStretch(1)
 
@@ -112,8 +113,9 @@ class TitleBar(QWidget):
         叶丛/樱花得用深色字。由 MainWindow 按背景实测明暗来调，不是猜的。
         """
         ink = "#F4F7FB" if light else theme.TEXT_PRIMARY
-        sub = "rgba(244, 247, 251, 0.72)" if light else theme.TEXT_SECONDARY
+        sub = "rgba(244, 247, 251, 0.78)" if light else theme.TEXT_SECONDARY
         hover = "rgba(255,255,255,0.16)" if light else theme.WINBTN_HOVER_BG
+        self._apply_text_shadow(light)
         self.setStyleSheet(
             f"QLabel#Wordmark {{ color: {ink}; background: transparent; }}"
             f"QLabel#Hint {{ color: {sub}; background: transparent; }}"
@@ -124,6 +126,25 @@ class TitleBar(QWidget):
             f" border-radius: 7px; padding: 0; font-size: 13px; }}"
             f"QPushButton#WinBtnClose:hover {{ background: {theme.DANGER}; color: white; }}"
         )
+
+    def _apply_text_shadow(self, light: bool) -> None:
+        """给字标和状态加一层投影。
+
+        标题栏压在照片上，早先靠"往顶部糊一层厚遮罩"保证可读，代价是横幅里的
+        照片被一起洗白。改成给字本身加投影：白字配黑影、黑字配白影，遮罩就能压到
+        很薄，照片该多清楚还多清楚。
+        """
+        from PySide6.QtGui import QColor
+        from PySide6.QtWidgets import QGraphicsDropShadowEffect
+
+        for widget in (getattr(self, "_wordmark", None), getattr(self, "status", None)):
+            if widget is None:
+                continue
+            effect = QGraphicsDropShadowEffect(widget)
+            effect.setBlurRadius(7)
+            effect.setOffset(0, 1)
+            effect.setColor(QColor(0, 0, 0, 190) if light else QColor(255, 255, 255, 215))
+            widget.setGraphicsEffect(effect)
 
     def _win_button(self, glyph: str, tip: str) -> QPushButton:
         btn = QPushButton(glyph, self)

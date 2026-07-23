@@ -1228,6 +1228,27 @@ class MainWindow(ShellWindowMixin, QMainWindow):
             return
         self.titlebar.set_ink(self.backdrop.top_luma() < 0.62)
         self.hero.set_ink(self.backdrop.band_luma() < 0.60)
+        self._sync_tab_ink(self.backdrop.tabs_luma() < 0.58)
+
+    def _sync_tab_ink(self, light: bool) -> None:
+        """页签也压在照片上（它紧贴横幅下沿，那儿的纱才刚加厚到一半）。
+
+        未选中的页签用的是弱色，压在叶丛、霓虹这种照片上基本看不见；
+        和标题栏、横幅用同一套判定：底下暗就换浅色字，并给一点点投影。
+        """
+        if not getattr(theme, "HAS_PHOTO", True):
+            self.tabs.setStyleSheet("")
+            return
+        if light:
+            self.tabs.setStyleSheet(
+                "QTabBar::tab { color: rgba(246, 249, 253, 0.86); }"
+                "QTabBar::tab:hover { background: rgba(255,255,255,0.14);"
+                " color: #FFFFFF; }"
+                f"QTabBar::tab:selected {{ color: {theme.ACCENT}; }}")
+        else:
+            self.tabs.setStyleSheet(
+                f"QTabBar::tab {{ color: {theme.TEXT_PRIMARY}; }}"
+                f"QTabBar::tab:selected {{ color: {theme.ACCENT}; }}")
 
     def _sync_backdrop_band(self) -> None:
         """背景照片"留清晰"的那一段 = 标题栏 + 横幅（横幅收起时只剩标题栏）。"""

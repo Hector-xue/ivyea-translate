@@ -25,8 +25,9 @@ from . import theme
 
 FPS = 30
 FADE_CLARITY = 64     # 清晰→虚化的过渡带：可以慢慢化，不影响可读性
-VEIL_LEAD = 62        # 纱从横幅下半段就开始加厚（拉得够长才不会自己成为一条横线）…
-VEIL_TRAIL = 14       # …并在页签文字之前走满，否则页签压在半透的照片上看不清
+VEIL_LEAD = 6         # 纱在横幅底边才开始加厚——早于此就把横幅里的照片洗白了…
+VEIL_TRAIL = 34       # …往下走 34px 完成：再长页签就压在半透的照片上看不清，
+                      #    再短这段渐变自己会变成一条看得见的横线
 _DEBUG = bool(os.environ.get("IVYEA_BACKDROP_DEBUG"))
 
 
@@ -43,6 +44,7 @@ class Backdrop(QWidget):
         self._band = 0        # 顶部清晰段高度，由 MainWindow 按标题栏+横幅算好传进来
         self._top_luma = 1.0  # 标题栏那条的平均明暗，决定字标用深色还是浅色
         self._band_luma = 1.0 # 横幅那一段的明暗，决定名句用深色还是浅色
+        self._tabs_luma = 1.0 # 页签那一条的明暗
         self._tint: Optional[QPixmap] = None      # 纯色主题的顶部色块（含标题栏那条）
         self._tint_token = ()
         self._baked: Optional[QPixmap] = None
@@ -127,6 +129,7 @@ class Backdrop(QWidget):
         dt = min(0.2, now - self._last)   # 卡顿/休眠后不要一次跳很远
         self._last = now
         if self._engine is not None:
+            self._engine.band = self._band     # 有的动效要贴着横幅那一段画（红旗）
             self._engine.step(dt, self.width(), self.height())
             if self._engine.baked:
                 self._grow(dt)
@@ -203,9 +206,11 @@ class Backdrop(QWidget):
             lp.drawPixmap(0, 0, sharp, 0, 0, tw, layer_h)
             lp.setCompositionMode(QPainter.CompositionMode_DestinationIn)
             g = QLinearGradient(0, 0, 0, layer_h)
-            edge = band / max(1, layer_h)
+            edge = min(0.98, band / max(1, layer_h))
+            # 满 alpha 一直保到横幅底边：原来提前 0.22 就开始衰减，衰减点落在
+            # 横幅内部，于是横幅下半截的照片本身就是糊的——"横幅一定要清晰"
             g.setColorAt(0.0, QColor(0, 0, 0, 255))
-            g.setColorAt(max(0.0, edge - 0.22), QColor(0, 0, 0, 255))
+            g.setColorAt(edge, QColor(0, 0, 0, 255))
             g.setColorAt(1.0, QColor(0, 0, 0, 0))
             lp.fillRect(0, 0, tw, layer_h, g)
             lp.end()
@@ -228,11 +233,13 @@ class Backdrop(QWidget):
         # 拉长压薄：原来是 52px 内压到 215 alpha，浅色主题下就成了一条"没图"的白带。
         # 现在改成 96px 的缓坡（顶端 132），读起来像光从上面打下来，而不是贴了条白纸。
         # 字看不看得清不靠这层解决——顶栏文字会按背景明暗自动换深浅（见 top_luma）。
-        scrim = QLinearGradient(0, 0, 0, 96 * dpr)
-        scrim.setColorAt(0.0, QColor(r, gc, b, 132))
-        scrim.setColorAt(0.55, QColor(r, gc, b, 62))
+        # 只压标题栏那一条，且很薄：再厚就把横幅里的照片洗白了（珠峰的深蓝天
+        # 被压成灰白就是这么来的）。标题栏文字的可读性靠自适应字色 + 字标投影。
+        scrim = QLinearGradient(0, 0, 0, 70 * dpr)
+        scrim.setColorAt(0.0, QColor(r, gc, b, 92))
+        scrim.setColorAt(0.55, QColor(r, gc, b, 42))
         scrim.setColorAt(1.0, QColor(r, gc, b, 0))
-        cp.fillRect(0, 0, tw, int(96 * dpr), scrim)
+        cp.fillRect(0, 0, tw, int(70 * dpr), scrim)
         cp.end()
 
         canvas.setDevicePixelRatio(dpr)
@@ -241,6 +248,9 @@ class Backdrop(QWidget):
         # 横幅那一段（文字压在这儿）单独量一次：顶栏亮不代表横幅也亮
         self._band_luma = self._measure_luma(
             canvas, int(44 * dpr), int(max(45, self._band) * dpr), right=0.62)
+        # 页签紧贴横幅下沿，那一条也得单独量：纱在这儿才刚加厚到一半
+        self._tabs_luma = self._measure_luma(
+            canvas, int(self._band * dpr), int((self._band + 38) * dpr), right=0.5)
 
     @staticmethod
     def _measure_luma(canvas: QPixmap, y0: int, y1: int, right: float = 1.0) -> float:
@@ -270,6 +280,11 @@ class Backdrop(QWidget):
         """横幅那一段的明暗，决定名句用深色字还是浅色字。"""
         self._ensure_bg()
         return getattr(self, "_band_luma", self.top_luma())
+
+    def tabs_luma(self) -> float:
+        """页签那一条的明暗，决定页签文字用深色还是浅色。"""
+        self._ensure_bg()
+        return getattr(self, "_tabs_luma", self.band_luma())
 
     def _ensure_tint(self) -> Optional[QPixmap]:
         """纯色主题的顶部色块：从窗口最顶一直铺到横幅底部，只在底部化开。
@@ -352,6 +367,7 @@ class Backdrop(QWidget):
                 p.drawPixmap(0, 0, tint)
 
         if self._engine is not None:
+            self._engine.band = self._band
             if self._engine.baked and self._baked is not None:
                 p.setOpacity(getattr(self._engine, "bake_alpha", lambda: 1.0)())
                 p.drawPixmap(0, 0, self._baked)
@@ -360,11 +376,11 @@ class Backdrop(QWidget):
             # 动效是画在底图之上的：藤蔓长着长着就爬过标题栏，把字标和窗口按钮盖住
             # （底图里那道顶部压深挡不住后画的东西）。这里再补一道，只压最上面一条。
             r, g, bl, _a = theme.BACKDROP_VEIL
-            top = QLinearGradient(0, 0, 0, 44)
-            top.setColorAt(0.0, QColor(r, g, bl, 120))
-            top.setColorAt(0.6, QColor(r, g, bl, 70))
+            top = QLinearGradient(0, 0, 0, 42)
+            top.setColorAt(0.0, QColor(r, g, bl, 88))
+            top.setColorAt(0.6, QColor(r, g, bl, 50))
             top.setColorAt(1.0, QColor(r, g, bl, 0))
-            p.fillRect(QRectF(0, 0, w, 44), top)
+            p.fillRect(QRectF(0, 0, w, 42), top)
         p.end()
 
         if _DEBUG:

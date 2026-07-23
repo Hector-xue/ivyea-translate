@@ -27,6 +27,8 @@ from PySide6.QtGui import (
 
 from . import theme
 
+TITLEBAR_SAFE = 44      # 标题栏那一条（含 Shell 顶部 6px 留白）不许动效压上去
+
 # 精灵缓存：路径 -> QPixmap（QPixmap 只能在有 QGuiApplication 后创建，故惰性加载）
 _SPRITES: Dict[str, Optional[QPixmap]] = {}
 
@@ -56,6 +58,7 @@ class Motion:
         self.rng = random.Random(seed or 20260722)
         self.t = 0.0
         self._w = self._h = 0
+        self.band = 0        # 顶部"清晰段"（标题栏+横幅）高度，宿主每帧告诉引擎
 
     def resize(self, w: int, h: int) -> None:
         """尺寸变了：默认重置（子类可保留状态）。"""
@@ -216,9 +219,8 @@ class FlagMotion(Motion):
         super().__init__(seed)
         self.flag = sprite("sprites/flag.png", "patriot")
         self.motes: List[dict] = []
-        self._layer_pm: Optional[QPixmap] = None
+        self._layers: Dict[tuple, dict] = {}   # (宽,高) -> 离屏层，两面旗各一份
         self._mote_pm: Optional[QPixmap] = None
-        self._layer_t = -99.0
 
     def reset(self) -> None:
         w, h = self._w, self._h
@@ -257,12 +259,6 @@ class FlagMotion(Motion):
             self._mote_pm = pm
         return self._mote_pm
 
-    def _layer(self, w: int, h: int) -> QPixmap:
-        if (self._layer_pm is None or self._layer_pm.width() != w
-                or self._layer_pm.height() != h):
-            self._layer_pm = QPixmap(max(1, w), max(1, h))
-        return self._layer_pm
-
     def draw_flag(self, p: QPainter, rect: QRectF, opacity: float = 1.0,
                   feather: bool = True) -> None:
         """旗面按列做正弦位移 + 明暗着色。
@@ -275,10 +271,11 @@ class FlagMotion(Motion):
         scale = min(1.0, self.LAYER_W / max(1.0, rect.width()))
         lw = max(8, int(rect.width() * scale))
         lh = max(8, int(rect.height() * scale))
-        stale = (self._layer_pm is None or self._layer_pm.width() != lw
-                 or self._layer_pm.height() != lh
-                 or self.t - self._layer_t >= 1 / 15.0)
-        layer = self._layer(lw, lh)
+        cache = self._layers.setdefault((lw, lh), {"pm": None, "t": -99.0})
+        stale = cache["pm"] is None or self.t - cache["t"] >= 1 / 15.0
+        if cache["pm"] is None:
+            cache["pm"] = QPixmap(lw, lh)
+        layer = cache["pm"]
         if not stale:
             # 丝绸起伏很慢，15fps 重画一次肉眼分辨不出，省掉一半绘制开销
             p.save()
@@ -287,7 +284,7 @@ class FlagMotion(Motion):
             p.restore()
             p.setOpacity(1.0)
             return
-        self._layer_t = self.t
+        cache["t"] = self.t
         layer.fill(Qt.transparent)
         lp = QPainter(layer)
         lp.setRenderHint(QPainter.SmoothPixmapTransform, False)  # 相邻切片不留缝
@@ -335,11 +332,26 @@ class FlagMotion(Motion):
         p.setOpacity(1.0)
 
     def draw(self, p: QPainter, w: int, h: int) -> None:
-        # 旗面垂在右下：顶部那段是照片最好看的地方（横幅文案也在那儿），
-        # 旗子压上去只会糊成一片暗红
-        fh = h * 0.62
+        # 红旗就该飘在横幅里：贴着顶部那段的右侧挂起来，占满横幅高度，
+        # 不透明度给到能看清旗面的程度——这是这套主题的主角，不是背景装饰
+        # 红旗挂在横幅里：上边避开标题栏（那儿有字标和窗口按钮），
+        # 右边留出"收起"按钮的位置，整面旗完整露出来，不被窗口边缘切掉
+        band = self.band if self.band > 60 else int(h * 0.28)
+        top = TITLEBAR_SAFE + 4
+        fh = max(48.0, band - top - 6)
         fw = fh * 1.5
-        self.draw_flag(p, QRectF(w - fw * 0.74, h * 0.34, fw, fh), opacity=0.26)
+        x = w - fw - 18
+        rect = QRectF(x, top, fw, fh)
+        p.save()                       # 一层浅浅的投影，把旗面从照片里托起来
+        p.setOpacity(0.22)
+        p.fillRect(rect.translated(3, 4), QColor(0, 0, 0))
+        p.restore()
+        # 不羽化：旗子就该有旗子的边，上下沿的起伏由波浪位移自然形成
+        self.draw_flag(p, rect, opacity=0.95, feather=False)
+        # 窗口下半部再垂一面很淡的，免得整扇窗只有顶上热闹
+        fh2 = h * 0.5
+        self.draw_flag(p, QRectF(w - fh2 * 1.5 * 0.72, h * 0.46, fh2 * 1.5, fh2),
+                       opacity=0.12)
         mote = self._mote()
         for m in self.motes:
             d = m["r"] * 6.4

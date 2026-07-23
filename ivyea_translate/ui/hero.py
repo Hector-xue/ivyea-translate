@@ -30,9 +30,10 @@ PAD_L = 24
 PAD_R = 96               # 右上角还有个"收起"按钮，别让字顶上去
 #: 正文字号阶梯 (字号, 允许行数)：从大往小试，取第一个放得下的
 SIZE_LADDER = ((25, 1), (22, 1), (20, 2), (18, 2), (16, 2), (15, 3), (14, 3))
-#: 诗词用楷体最像样；系统没有就一路回退到界面字体
-QUOTE_FAMILIES = ["Kaiti SC", "KaiTi", "STKaiti", "楷体", "TW-Kai",
-                  "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", "SimSun"]
+#: 名句就用界面字体。试过楷体、宋体，单看是好看，摆进这个界面里和其余所有文字
+#: 都不是一路人，横幅像贴了张别处剪来的纸——统一字体反而更整。
+def _quote_families():
+    return [f.strip().strip('"') for f in theme.FONT_FAMILY.split(",")]
 
 
 class HeroBanner(QWidget):
@@ -57,7 +58,7 @@ class HeroBanner(QWidget):
         self._layer_token_v = ()
 
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 6, 8, 0)
+        lay.setContentsMargins(0, 0, 10, 6)
         lay.addStretch(1)
         self.collapse_btn = QPushButton("收起", self)
         self.collapse_btn.setObjectName("Ghost")
@@ -65,7 +66,8 @@ class HeroBanner(QWidget):
         self.collapse_btn.setCursor(Qt.PointingHandCursor)
         self.collapse_btn.setFixedHeight(22)
         self.collapse_btn.clicked.connect(self.collapse_requested)
-        lay.addWidget(self.collapse_btn, 0, Qt.AlignTop)
+        # 靠底：右上角要留给红旗那类贴着横幅顶部画的动效
+        lay.addWidget(self.collapse_btn, 0, Qt.AlignBottom)
         self._sync_btn_style()
 
         self._rotate = QTimer(self)
@@ -168,7 +170,7 @@ class HeroBanner(QWidget):
     @staticmethod
     def _quote_font(px: int) -> QFont:
         f = QFont()
-        f.setFamilies(QUOTE_FAMILIES + [theme.FONT_FAMILY.split(",")[0].strip('"')])
+        f.setFamilies(_quote_families())
         f.setPixelSize(px)
         f.setLetterSpacing(QFont.PercentageSpacing, 103)
         return f
@@ -268,8 +270,7 @@ class HeroBanner(QWidget):
         line_h = qfm.height() * 1.2
 
         src_font = QFont()
-        src_font.setFamilies(QUOTE_FAMILIES
-                             + [theme.FONT_FAMILY.split(",")[0].strip('"')])
+        src_font.setFamilies(_quote_families())
         src_font.setPixelSize(13)
         sfm = QFontMetricsF(src_font)
         src_h = sfm.height() * 1.35

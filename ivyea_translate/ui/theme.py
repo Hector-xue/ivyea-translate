@@ -60,7 +60,7 @@ _THEMES: Dict[str, dict] = {
         "hero_ink": "#FFFFFF", "hero_sub": "#E8F3DC",
     },
     "patriot": {
-        "label": "爱国风",
+        "label": "红旗",
         "slogan": "山河为证",
         "sub": "以中国话，讲清楚世界的话",
         "motion": "flag",
@@ -144,7 +144,7 @@ _THEMES: Dict[str, dict] = {
         "field": "#F6FAFD", "field_border": "#DCE6EF",
         "shadow": (30, 48, 62),
         "veil": (250, 253, 255, 0.74),
-        "veil_top": 0.14,
+        "veil_top": 0.08,
         "bg_focus": 0.05,
         "blur": 2, "card_alpha": 0.93,
         "hero_ink": "#FFFFFF", "hero_sub": "#DCEBF7",
