@@ -6,8 +6,8 @@
 品牌绿的呼吸感），卡片改纯白 + 细描边，输入框反过来做成"凹陷"的浅灰绿，
 层级立刻分明：底 < 卡 < 控件。
 
-**多主题**：上面那套是默认主题「常春藤」的取向，其余五套（爱国风 / 星海 / 樱花 /
-赛博 / 雪山）沿用同一套层级关系，只换调色板与背景照片。
+**多主题**：上面那套是默认主题「常春藤」的取向，另两套实拍主题（星海 / 樱花）
+沿用同一套层级关系，只换调色板与背景照片；再加清绿 / 墨夜两套纯色主题，不用照片。
 
 实现上刻意保留了"模块级常量"这种最土的形态：`ACCENT`/`CARD_BG`/`TEXT_PRIMARY`…
 全模块共二十几个名字散落在 popup / inplace_overlay / titlebar / capture_overlay 里，
@@ -39,7 +39,7 @@ def _rgba(color: str, alpha: float) -> str:
 
 
 # 每套主题只写核心色，其余（hover/pressed/soft/滚动条…）按同一组关系推导，
-# 保证六套主题的"层级手感"一致，不会这套按钮很跳、那套按钮很闷。
+# 保证五套主题的"层级手感"一致，不会这套按钮很跳、那套按钮很闷。
 _THEMES: Dict[str, dict] = {
     "ivy": {
         "label": "常春藤",
@@ -58,24 +58,6 @@ _THEMES: Dict[str, dict] = {
         "bg_focus": 0.42,                # cover 裁切的纵向锚点（0=贴顶）
         "blur": 3, "card_alpha": 0.93,
         "hero_ink": "#FFFFFF", "hero_sub": "#E8F3DC",
-    },
-    "patriot": {
-        "label": "红旗",
-        "slogan": "山河为证",
-        "sub": "以中国话，讲清楚世界的话",
-        "motion": "flag",
-        "dark": False,
-        "accent": "#C8102E", "accent_hover": "#AE0C27", "accent_pressed": "#8F0A20",
-        "ink": "#3A2320", "ink2": "#8C6F68", "ink3": "#B09A94",
-        "base": ("#FFFCF8", "#FDF6EF", "#F8E9DD"),
-        "card": "#FFFFFF", "card_border": "#F0DFD2",
-        "field": "#FDF7F2", "field_border": "#EFE0D5",
-        "shadow": (92, 34, 24),
-        "veil": (255, 250, 244, 0.76),
-        "veil_top": 0.22,
-        "bg_focus": 0.30,
-        "blur": 3, "card_alpha": 0.93,
-        "hero_ink": "#FFF3D6", "hero_sub": "#FFDCC4",
     },
     "starfield": {
         "label": "星海",
@@ -112,42 +94,6 @@ _THEMES: Dict[str, dict] = {
         "bg_focus": 0.40,
         "blur": 3, "card_alpha": 0.93,
         "hero_ink": "#FFFFFF", "hero_sub": "#FFE3EE",
-    },
-    "cyber": {
-        "label": "赛博",
-        "slogan": "越夜越清醒",
-        "sub": "招牌亮到天明，你的词句也不必打烊",
-        "motion": "neon",
-        "dark": True,
-        "accent": "#2DE2E6", "accent_hover": "#5AEFF2", "accent_pressed": "#1FC5C9",
-        "ink": "#E6F6FF", "ink2": "#8FA6BF", "ink3": "#63788F",
-        "base": ("#070A14", "#0A0F1E", "#101A2E"),
-        "card": "#121A2B", "card_border": "#243349",
-        "field": "#0C1424", "field_border": "#26374F",
-        "shadow": (0, 6, 14),
-        "veil": (7, 10, 20, 0.68),
-        "veil_top": 0.14,
-        "bg_focus": 0.44,
-        "blur": 0, "card_alpha": 0.90,
-        "hero_ink": "#EAFDFF", "hero_sub": "#7FE3E8",
-    },
-    "alpine": {
-        "label": "雪山",
-        "slogan": "日照金山",
-        "sub": "第一缕光落在山尖，你要的那个词也刚好落下来",
-        "motion": "fog",
-        "dark": False,
-        "accent": "#3E7FA8", "accent_hover": "#356E92", "accent_pressed": "#2C5C7C",
-        "ink": "#26333D", "ink2": "#71828F", "ink3": "#9AA8B3",
-        "base": ("#FDFEFF", "#F5F9FC", "#E7EFF6"),
-        "card": "#FFFFFF", "card_border": "#DFE8F0",
-        "field": "#F6FAFD", "field_border": "#DCE6EF",
-        "shadow": (30, 48, 62),
-        "veil": (250, 253, 255, 0.74),
-        "veil_top": 0.08,
-        "bg_focus": 0.05,
-        "blur": 2, "card_alpha": 0.93,
-        "hero_ink": "#FFFFFF", "hero_sub": "#DCEBF7",
     },
     # ---- 两套纯色主题：不用照片、不跑动效，要的就是安静 ----
     "mint": {

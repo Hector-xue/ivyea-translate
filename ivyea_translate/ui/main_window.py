@@ -1088,7 +1088,7 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         grid.setVerticalSpacing(8)
         self._theme_chips = {}
         active = theme.current()
-        cols = 4               # 八套主题正好两行，排三列会剩下两个孤零零地吊在第三行
+        cols = 3               # 五套主题排成 3+2；排四列会剩最后一个孤零零地吊在第二行
         for i, key in enumerate(theme.theme_keys()):
             chip = _ThemeChip(key)
             chip.picked.connect(self._on_theme_picked)

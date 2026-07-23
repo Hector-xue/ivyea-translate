@@ -1,9 +1,9 @@
-"""六套主题的背景动效引擎。
+"""三套实拍主题的背景动效引擎（纯色主题不跑动效）。
 
 约定：
 - 每个引擎实现 `step(dt, w, h)` 与 `draw(painter, w, h)`，宿主控件（Backdrop/HeroBanner）
   只负责计时、裁剪与调度，引擎自己不碰 Qt 的窗口体系。
-- **可见元素一律用真实照片精灵**（叶片/花瓣/国旗/霓虹/云雾/星野都来自 assets/themes/*/sprites，
+- **可见元素一律用真实照片精灵**（叶片/花瓣/星野都来自 assets/themes/*/sprites，
   素材是公有领域或 CC0 的实拍图），程序只做位移、旋转、缩放、明暗与透明度；
   唯一的例外是常春藤的藤茎——那是一条线，和门户站 `site/js/ivy.js` 的做法保持一致。
 - 慢变的内容（长好的藤蔓）烘焙进离屏 pixmap，每帧只重画活动元素，避免全量重绘。
@@ -58,7 +58,6 @@ class Motion:
         self.rng = random.Random(seed or 20260722)
         self.t = 0.0
         self._w = self._h = 0
-        self.band = 0        # 顶部"清晰段"（标题栏+横幅）高度，宿主每帧告诉引擎
 
     def resize(self, w: int, h: int) -> None:
         """尺寸变了：默认重置（子类可保留状态）。"""
@@ -205,160 +204,6 @@ class IvyMotion(Motion):
         p.setOpacity(1.0)
 
 
-# ============================ 爱国风：红旗丝绸飘动 + 金色微粒 ============================
-
-
-class FlagMotion(Motion):
-    """真实旗面按列做正弦位移 + 明暗着色 = 丝绸起伏；再飘一层金色微粒。"""
-
-    SLICE = 5          # 离屏层里的切片宽（层本身是降分辨率的，别按屏幕像素算）
-    LAYER_W = 380      # 离屏层最大宽度：旗面是 32% 不透明度的柔化装饰，
-                       # 按屏幕分辨率画纯属浪费（实测每帧 30ms -> 3ms）
-
-    def __init__(self, seed: int = 0):
-        super().__init__(seed)
-        self.flag = sprite("sprites/flag.png", "patriot")
-        self.motes: List[dict] = []
-        self._layers: Dict[tuple, dict] = {}   # (宽,高) -> 离屏层，两面旗各一份
-        self._mote_pm: Optional[QPixmap] = None
-
-    def reset(self) -> None:
-        w, h = self._w, self._h
-        self.motes = [{
-            "x": self.rng.uniform(0, max(1, w)),
-            "y": self.rng.uniform(0, max(1, h)),
-            "r": self.rng.uniform(1.0, 2.6),
-            "v": self.rng.uniform(6, 20),
-            "phase": self.rng.uniform(0, 6.3),
-        } for _ in range(26)]
-
-    def step(self, dt: float, w: int, h: int) -> None:
-        super().step(dt, w, h)
-        for m in self.motes:
-            m["y"] -= m["v"] * dt
-            m["x"] += math.sin(self.t * 0.7 + m["phase"]) * 6 * dt
-            if m["y"] < -6:
-                m["y"] = h + self.rng.uniform(0, 30)
-                m["x"] = self.rng.uniform(0, max(1, w))
-
-    def _mote(self) -> QPixmap:
-        """一颗金色微粒烘焙一次重复用：径向渐变每帧算 26 次是笔冤枉开销。"""
-        if self._mote_pm is None:
-            size = 32
-            pm = QPixmap(size, size)
-            pm.fill(Qt.transparent)
-            mp = QPainter(pm)
-            mp.setRenderHint(QPainter.Antialiasing, True)
-            g = QRadialGradient(size / 2, size / 2, size / 2)
-            g.setColorAt(0.0, QColor(255, 214, 120, 200))
-            g.setColorAt(1.0, QColor(255, 196, 90, 0))
-            mp.setBrush(g)
-            mp.setPen(Qt.NoPen)
-            mp.drawEllipse(0, 0, size, size)
-            mp.end()
-            self._mote_pm = pm
-        return self._mote_pm
-
-    def draw_flag(self, p: QPainter, rect: QRectF, opacity: float = 1.0,
-                  feather: bool = True) -> None:
-        """旗面按列做正弦位移 + 明暗着色。
-
-        先画进离屏层再羽化边缘整体贴上：直接往背景上画会得到一块边缘齐刷刷的
-        矩形，看着像贴了张图而不是"飘在那儿"。
-        """
-        if self.flag is None or rect.width() < 8 or rect.height() < 8:
-            return
-        scale = min(1.0, self.LAYER_W / max(1.0, rect.width()))
-        lw = max(8, int(rect.width() * scale))
-        lh = max(8, int(rect.height() * scale))
-        cache = self._layers.setdefault((lw, lh), {"pm": None, "t": -99.0})
-        stale = cache["pm"] is None or self.t - cache["t"] >= 1 / 15.0
-        if cache["pm"] is None:
-            cache["pm"] = QPixmap(lw, lh)
-        layer = cache["pm"]
-        if not stale:
-            # 丝绸起伏很慢，15fps 重画一次肉眼分辨不出，省掉一半绘制开销
-            p.save()
-            p.setOpacity(opacity)
-            p.drawPixmap(rect, layer, QRectF(layer.rect()))
-            p.restore()
-            p.setOpacity(1.0)
-            return
-        cache["t"] = self.t
-        layer.fill(Qt.transparent)
-        lp = QPainter(layer)
-        lp.setRenderHint(QPainter.SmoothPixmapTransform, False)  # 相邻切片不留缝
-        src_w, src_h = self.flag.width(), self.flag.height()
-        n = max(1, lw // self.SLICE)
-        sw = src_w / n
-        col_w = lw / n
-        for i in range(n):
-            phase = self.t * 1.7 - i * 0.16
-            dy = math.sin(phase) * lh * 0.07
-            squeeze = 1.0 + math.cos(phase) * 0.05
-            x = i * col_w
-            dst = QRectF(x, dy, col_w + 1.2, lh * squeeze)
-            lp.drawPixmap(dst, self.flag, QRectF(i * sw, 0, sw, src_h))
-            # 丝绸的明暗：波谷压暗、波峰提亮
-            shade = math.sin(phase + 0.7)
-            if abs(shade) < 0.28:
-                continue          # 波形平缓处压根看不出明暗，别浪费一次填充
-            if shade < 0:
-                lp.setOpacity(min(0.30, -shade * 0.30))
-                lp.fillRect(dst, QColor(70, 0, 8))
-            else:
-                lp.setOpacity(min(0.18, shade * 0.18))
-                lp.fillRect(dst, QColor(255, 228, 172))
-            lp.setOpacity(1.0)
-        if feather:
-            # DestinationIn 用渐变去乘 alpha：左右一遍、上下一遍，四边都化开
-            lp.setCompositionMode(QPainter.CompositionMode_DestinationIn)
-            gx = QLinearGradient(0, 0, lw, 0)
-            gx.setColorAt(0.0, QColor(0, 0, 0, 0))
-            gx.setColorAt(0.38, QColor(0, 0, 0, 255))
-            gx.setColorAt(1.0, QColor(0, 0, 0, 255))
-            lp.fillRect(0, 0, lw, lh, gx)
-            gy = QLinearGradient(0, 0, 0, lh)
-            gy.setColorAt(0.0, QColor(0, 0, 0, 0))
-            gy.setColorAt(0.30, QColor(0, 0, 0, 255))
-            gy.setColorAt(0.72, QColor(0, 0, 0, 255))
-            gy.setColorAt(1.0, QColor(0, 0, 0, 0))
-            lp.fillRect(0, 0, lw, lh, gy)
-        lp.end()
-        p.save()
-        p.setOpacity(opacity)
-        p.drawPixmap(rect, layer, QRectF(layer.rect()))
-        p.restore()
-        p.setOpacity(1.0)
-
-    def draw(self, p: QPainter, w: int, h: int) -> None:
-        # 红旗就该飘在横幅里：贴着顶部那段的右侧挂起来，占满横幅高度，
-        # 不透明度给到能看清旗面的程度——这是这套主题的主角，不是背景装饰
-        # 红旗挂在横幅里：上边避开标题栏（那儿有字标和窗口按钮），
-        # 右边留出"收起"按钮的位置，整面旗完整露出来，不被窗口边缘切掉
-        band = self.band if self.band > 60 else int(h * 0.28)
-        top = TITLEBAR_SAFE + 4
-        fh = max(48.0, band - top - 6)
-        fw = fh * 1.5
-        x = w - fw - 18
-        rect = QRectF(x, top, fw, fh)
-        p.save()                       # 一层浅浅的投影，把旗面从照片里托起来
-        p.setOpacity(0.22)
-        p.fillRect(rect.translated(3, 4), QColor(0, 0, 0))
-        p.restore()
-        # 不羽化：旗子就该有旗子的边，上下沿的起伏由波浪位移自然形成
-        self.draw_flag(p, rect, opacity=0.95, feather=False)
-        # 窗口下半部再垂一面很淡的，免得整扇窗只有顶上热闹
-        fh2 = h * 0.5
-        self.draw_flag(p, QRectF(w - fh2 * 1.5 * 0.72, h * 0.46, fh2 * 1.5, fh2),
-                       opacity=0.12)
-        mote = self._mote()
-        for m in self.motes:
-            d = m["r"] * 6.4
-            p.drawPixmap(QRectF(m["x"] - d / 2, m["y"] - d / 2, d, d), mote,
-                         QRectF(mote.rect()))
-
-
 # ============================ 星海：视差星野 + 流星 ============================
 
 
@@ -494,65 +339,7 @@ class PetalsMotion(Motion):
         p.setOpacity(1.0)
 
 
-# ============================ 赛博：霓虹呼吸 + 扫描光带 ============================
-
-
-class NeonMotion(Motion):
-    """真实霓虹招牌抠像做呼吸辉光，配一条缓慢下扫的扫描带。"""
-
-    def __init__(self, seed: int = 0):
-        super().__init__(seed)
-        self.neon = sprite("sprites/neon.png", "cyber")
-
-    def draw(self, p: QPainter, w: int, h: int) -> None:
-        if self.neon is not None:
-            pulse = 0.16 + 0.12 * (0.5 + 0.5 * math.sin(self.t * 1.6))
-            nw = w * 0.62
-            nh = nw * self.neon.height() / max(1, self.neon.width())
-            drift = math.sin(self.t * 0.25) * w * 0.012
-            p.setOpacity(pulse)
-            p.drawPixmap(QRectF(w - nw * 0.96 + drift, h - nh * 1.05, nw, nh),
-                         self.neon, QRectF(self.neon.rect()))
-            p.setOpacity(1.0)
-        # 扫描带：一条自上而下循环的青色光带
-        band_h = max(40.0, h * 0.16)
-        y = ((self.t * 46.0) % (h + band_h)) - band_h
-        grad = QLinearGradient(0, y, 0, y + band_h)
-        accent = QColor(theme.ACCENT)
-        grad.setColorAt(0.0, QColor(accent.red(), accent.green(), accent.blue(), 0))
-        grad.setColorAt(0.5, QColor(accent.red(), accent.green(), accent.blue(), 26))
-        grad.setColorAt(1.0, QColor(accent.red(), accent.green(), accent.blue(), 0))
-        p.fillRect(QRectF(0, y, w, band_h), grad)
-
-
-# ============================ 雪山：云雾横移 ============================
-
-
-class FogMotion(Motion):
-    """真实云雾照片抠出的云带，分三层不同速度横向缓移。"""
-
-    def __init__(self, seed: int = 0):
-        super().__init__(seed)
-        self.fog = sprite("sprites/fog.png", "alpine")
-        self.layers = [
-            {"y": 0.34, "scale": 1.5, "speed": 5.0, "op": 0.22},
-            {"y": 0.56, "scale": 1.1, "speed": 8.5, "op": 0.28},
-            {"y": 0.78, "scale": 0.8, "speed": 13.0, "op": 0.20},
-        ]
-
-    def draw(self, p: QPainter, w: int, h: int) -> None:
-        if self.fog is None:
-            return
-        for i, ly in enumerate(self.layers):
-            fw = max(60.0, w * ly["scale"])
-            fh = fw * self.fog.height() / max(1, self.fog.width())
-            x = -((self.t * ly["speed"] + i * 311) % (fw))
-            y = h * ly["y"] - fh / 2 + math.sin(self.t * 0.3 + i) * h * 0.01
-            p.setOpacity(ly["op"] * (0.85 + 0.15 * math.sin(self.t * 0.4 + i * 1.7)))
-            while x < w:
-                p.drawPixmap(QRectF(x, y, fw, fh), self.fog, QRectF(self.fog.rect()))
-                x += fw - 1
-        p.setOpacity(1.0)
+# ============================ 横幅专用：常春藤轻量飘叶 ============================
 
 
 class LeafDriftMotion(Motion):
@@ -610,11 +397,8 @@ class LeafDriftMotion(Motion):
 
 _ENGINES = {
     "ivy": IvyMotion,
-    "flag": FlagMotion,
     "stars": StarsMotion,
     "petals": PetalsMotion,
-    "neon": NeonMotion,
-    "fog": FogMotion,
 }
 
 

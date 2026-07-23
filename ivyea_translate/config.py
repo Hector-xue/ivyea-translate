@@ -116,8 +116,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "ui": {
         "popup_width": 520,
         "history_limit": 100,
-        # 外观主题：ivy(常春藤) / patriot(爱国风) / starfield(星海) /
-        # sakura(樱花) / cyber(赛博) / alpine(雪山)
+        # 外观主题：ivy(常春藤) / starfield(星海) / sakura(樱花)
+        # 纯色：mint(清绿) / midnight(墨夜)
         "theme": "ivy",
         "theme_motion": True,     # 背景与横幅的动效（关掉只留静态实拍图，零 CPU）
         "theme_banner": True,     # 标题栏下的主题横幅
@@ -134,6 +134,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "preferred": "",  # 记住上次命中的免费端点，下次优先用（免去 DeepL 首次重试等待）
     },
 }
+
+#: 已下架的主题（配套素材已从仓库删除），老配置里遇到就归位到默认主题
+_REMOVED_THEMES = frozenset({"patriot", "cyber", "alpine"})
 
 
 def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
@@ -183,6 +186,10 @@ class Config:
         # v0.8 起默认智能方向；旧默认 zh-CN 视为未自定义，升级到 auto
         if tr.get("target_language") == "zh-CN":
             tr["target_language"] = "auto"
+        # 已移除的主题（红旗/赛博/雪山）：老配置还存着的话，资源目录已经不在，
+        # 界面会退回默认主题却显示不出选中项，这里直接把配置也归位
+        if ui.get("theme") in _REMOVED_THEMES:
+            ui["theme"] = DEFAULT_CONFIG["ui"]["theme"]
         hk = self._data.get("hotkeys", {})
         # 已移除的快捷键/功能：清掉老配置里的残留键，避免误导
         hk.pop("show_main_window", None)

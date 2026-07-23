@@ -129,7 +129,6 @@ class Backdrop(QWidget):
         dt = min(0.2, now - self._last)   # 卡顿/休眠后不要一次跳很远
         self._last = now
         if self._engine is not None:
-            self._engine.band = self._band     # 有的动效要贴着横幅那一段画（红旗）
             self._engine.step(dt, self.width(), self.height())
             if self._engine.baked:
                 self._grow(dt)
@@ -367,7 +366,6 @@ class Backdrop(QWidget):
                 p.drawPixmap(0, 0, tint)
 
         if self._engine is not None:
-            self._engine.band = self._band
             if self._engine.baked and self._baked is not None:
                 p.setOpacity(getattr(self._engine, "bake_alpha", lambda: 1.0)())
                 p.drawPixmap(0, 0, self._baked)

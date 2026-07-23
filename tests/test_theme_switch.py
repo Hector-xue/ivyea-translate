@@ -51,7 +51,7 @@ def test_theme_assets_present(key):
 
 @pytest.mark.parametrize("key", theme.theme_keys())
 def test_backdrop_paints_every_theme(qapp, key):
-    """六套主题的背景层都要能画出内容（缺资源/引擎报错会得到一张空图）。"""
+    """每套主题的背景层都要能画出内容（缺资源/引擎报错会得到一张空图）。"""
     from PySide6.QtWidgets import QWidget
 
     theme.apply(key)
@@ -95,7 +95,7 @@ def test_hero_reload_switches_theme(qapp):
     hero = HeroBanner(motion_enabled=False)
     hero.resize(600, 96)
     first = theme.spec()["slogan"]
-    theme.apply("cyber")
+    theme.apply("starfield")
     hero.reload()
     assert theme.spec()["slogan"] != first
     pm = hero.grab()
@@ -210,7 +210,7 @@ def test_inplace_frame_follows_theme(qapp):
     shot.fill(QColor("#FFFFFF"))
 
     seen = {}
-    for key in ("ivy", "patriot", "starfield"):
+    for key in ("ivy", "sakura", "starfield"):
         theme.apply(key)
         ov = InPlaceOverlay(QRect(0, 0, 400, 200), shot, 1.0)
         ov._frame_alpha = 255

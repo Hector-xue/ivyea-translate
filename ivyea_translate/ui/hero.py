@@ -66,7 +66,7 @@ class HeroBanner(QWidget):
         self.collapse_btn.setCursor(Qt.PointingHandCursor)
         self.collapse_btn.setFixedHeight(22)
         self.collapse_btn.clicked.connect(self.collapse_requested)
-        # 靠底：右上角要留给红旗那类贴着横幅顶部画的动效
+        # 靠底：右上角要留给贴着横幅顶部画的动效
         lay.addWidget(self.collapse_btn, 0, Qt.AlignBottom)
         self._sync_btn_style()
 
