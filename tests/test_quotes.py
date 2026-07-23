@@ -34,20 +34,36 @@ def test_deck_no_repeat_within_a_cycle():
 
 
 def test_short_quote_gets_bigger_font_than_long_one(qapp):
+    """同样的可用宽度下，长句必须让位——降字号或者折行。
+
+    这里的宽度不能写死：CI 机器上没装中文字体，汉字全被量成同一个窄框，
+    写死宽度会让长句在最大号下也"放得下"，测试就白测了。改成按短句在最大号下
+    的实际宽度来定，无论字体怎样，长句都塞不进这个宽度。
+    """
+    from PySide6.QtGui import QFontMetricsF
+
     theme.apply("ivy")
     hero = HeroBanner(motion_enabled=False)
     hero.resize(760, 96)
 
-    hero._quote = ("辞达而已矣。", "《论语·卫灵公》")
-    short_px, short_lines = hero._layout_quote(640)
-    hero._quote = ("叹隙中驹，石中火，梦中身。几时归去，作个闲人。"
-                   "对一张琴，一壶酒，一溪云。", "苏轼《行香子·述怀》")
-    long_px, long_lines = hero._layout_quote(640)
+    short = ("辞达而已矣。", "《论语·卫灵公》")
+    long_ = ("叹隙中驹，石中火，梦中身。几时归去，作个闲人。"
+             "对一张琴，一壶酒，一溪云。", "苏轼《行香子·述怀》")
+    from ivyea_translate.ui import hero as hero_mod
 
-    assert short_px > long_px, "短句该用更大的字号"
-    assert len(short_lines) == 1
-    assert "".join(long_lines) == hero._quote[0], "折行不能吞字"
-    assert len(long_lines) <= 3
+    biggest = hero_mod.SIZE_LADDER[0][0]
+    fm = QFontMetricsF(hero._quote_font(biggest))
+    width = fm.horizontalAdvance(short[0]) + 8      # 刚好够短句排一行
+
+    hero._quote = short
+    short_px, short_lines = hero._layout_quote(width)
+    hero._quote = long_
+    long_px, long_lines = hero._layout_quote(width)
+
+    assert short_px == biggest and len(short_lines) == 1, "短句该用最大号排一行"
+    assert (long_px < short_px) or (len(long_lines) > 1), "长句得降号或折行"
+    assert "".join(long_lines) == long_[0], "折行不能吞字"
+    assert len(long_lines) <= 4
 
 
 def test_next_quote_changes_content_and_invalidates_layer(qapp):
