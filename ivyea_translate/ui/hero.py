@@ -94,27 +94,8 @@ class HeroBanner(QWidget):
             p.setPen(Qt.NoPen)
             p.drawEllipse(QPointF(0.0, 0.0), radius, radius)
             p.restore()
-        else:
-            # 纯色主题：没有照片可压，改成一层极淡的品牌色氛围。
-            # 关键是**竖直方向也要化开**——只做横向渐变的话，色块底边又是一刀切，
-            # 横幅照样变成一个贴上去的方块。
-            accent = QColor(theme.ACCENT)
-            peak = 30 if not theme.IS_DARK else 40
-            band = QPixmap(max(1, w), max(1, h))
-            band.fill(Qt.transparent)
-            bp = QPainter(band)
-            side = QLinearGradient(0, 0, w * 0.85, 0)
-            side.setColorAt(0.0, QColor(accent.red(), accent.green(), accent.blue(), peak))
-            side.setColorAt(1.0, QColor(accent.red(), accent.green(), accent.blue(), 0))
-            bp.fillRect(0, 0, w, h, side)
-            bp.setCompositionMode(QPainter.CompositionMode_DestinationIn)
-            fade = QLinearGradient(0, 0, 0, h)
-            fade.setColorAt(0.0, QColor(0, 0, 0, 255))
-            fade.setColorAt(0.55, QColor(0, 0, 0, 235))
-            fade.setColorAt(1.0, QColor(0, 0, 0, 0))   # 底边化到 0，不留边
-            bp.fillRect(0, 0, w, h, fade)
-            bp.end()
-            p.drawPixmap(0, 0, band)
+        # 纯色主题这里什么都不画：顶部色块由背景层从 y=0 一路铺到横幅底部，
+        # 上半段因此和标题栏连成一片，渐变只出现在横幅下沿（见 Backdrop._ensure_tint）
 
         family = theme.FONT_FAMILY.split(",")[0].strip('"')
         title = QFont(family)
@@ -140,9 +121,4 @@ class HeroBanner(QWidget):
         p.setPen(QColor(theme.HERO_SUB_INK))
         p.drawText(sub_rect, Qt.AlignLeft | Qt.AlignVCenter, spec["sub"])
 
-        if not photo:
-            # 纯色主题没有照片可以"渐渐化开"，横幅和内容区必须有个交代：
-            # 在横幅最底下压一条细分界线（照片主题不画，那边靠虚化过渡本身分层）
-            line = QColor(theme.CARD_BORDER)
-            p.fillRect(QRectF(0, h - 1, w, 1), line)
         p.end()

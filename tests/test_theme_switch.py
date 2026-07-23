@@ -250,3 +250,50 @@ def test_titlebar_ink_flips_on_dark_photo(qapp):
     assert "#F4F7FB" not in win.titlebar.styleSheet()
     win.really_quit = True
     win.close()
+
+
+@pytest.mark.parametrize("key", [k for k in theme.theme_keys()
+                                 if not theme.spec(k).get("photo", True)])
+def test_solid_tint_spans_titlebar_and_fades_at_bottom(qapp, key):
+    """纯色主题的顶部色块要从窗口最顶铺下来，只在底部化开。
+
+    色块以前是横幅自己画的，上边缘正好落在横幅顶部 —— 横幅和标题栏之间就多出
+    一道渐变边。现在由背景层画，覆盖"标题栏 + 横幅"整段。
+    """
+    from PySide6.QtWidgets import QWidget
+
+    theme.apply(key)
+    host = QWidget()
+    host.resize(400, 300)
+    bd = Backdrop(host, motion_enabled=False)
+    bd.resize(400, 300)
+    bd.set_band(140)
+    tint = bd._ensure_tint()
+    assert tint is not None
+    img = tint.toImage()
+    assert img.height() == int(140 * bd._dpr())
+
+    top = img.pixelColor(2, 0).alpha()            # 最顶一行（标题栏那条）必须已经着色
+    mid = img.pixelColor(2, img.height() // 2).alpha()
+    bottom = img.pixelColor(2, img.height() - 1).alpha()
+    assert top > 0, "顶部没上色，标题栏和横幅之间就会露出一道边"
+    assert mid > 0
+    # 渐变插值会留 1/255 的零头，肉眼是全透明
+    assert bottom <= 2, "底边必须化到全透明，过渡只留在横幅下沿"
+    assert top >= mid >= bottom
+
+
+def test_solid_hero_paints_no_background(qapp):
+    """纯色主题下横幅只负责文字：背景交给背景层，免得又画出一道边。"""
+    from PySide6.QtGui import QColor
+
+    theme.apply("mint")
+    hero = HeroBanner(motion_enabled=False)
+    hero.resize(500, 96)
+    img = hero.grab().toImage()
+    # 右侧远离文案的位置：横幅自己不该涂任何底色（grab 的透明区会是黑/透明）
+    corner = img.pixelColor(480, 90)
+    accent = QColor(theme.ACCENT)
+    assert not (abs(corner.red() - accent.red()) < 30
+                and abs(corner.green() - accent.green()) < 30
+                and abs(corner.blue() - accent.blue()) < 30 and corner.alpha() > 40)

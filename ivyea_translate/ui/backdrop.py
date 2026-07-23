@@ -42,6 +42,8 @@ class Backdrop(QWidget):
         self._bg_token = ()
         self._band = 0        # 顶部清晰段高度，由 MainWindow 按标题栏+横幅算好传进来
         self._top_luma = 1.0  # 标题栏那条的平均明暗，决定字标用深色还是浅色
+        self._tint: Optional[QPixmap] = None      # 纯色主题的顶部色块（含标题栏那条）
+        self._tint_token = ()
         self._baked: Optional[QPixmap] = None
         self._engine = motion_mod.build(theme.spec()["motion"])
         self._last = time.monotonic()
@@ -93,6 +95,7 @@ class Backdrop(QWidget):
         """换主题：底图、烘焙层、动效引擎全部重建。"""
         self._bg = None
         self._bg_token = ()
+        self._tint = None
         self._baked = None
         self._engine = motion_mod.build(theme.spec()["motion"])
         if self._engine is not None:
@@ -113,6 +116,7 @@ class Backdrop(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._bg = None
+        self._tint = None
         self._baked = None
         if self._engine is not None:
             self._engine.resize(self.width(), self.height())
@@ -138,6 +142,7 @@ class Backdrop(QWidget):
         if height != self._band:
             self._band = height
             self._bg = None
+            self._tint = None
             self.update()
 
     def _ensure_bg(self) -> None:
@@ -255,6 +260,43 @@ class Backdrop(QWidget):
         self._ensure_bg()
         return getattr(self, "_top_luma", 1.0 if not theme.IS_DARK else 0.0)
 
+    def _ensure_tint(self) -> Optional[QPixmap]:
+        """纯色主题的顶部色块：从窗口最顶一直铺到横幅底部，只在底部化开。
+
+        这块必须由背景层来画、而且要盖住标题栏那条——之前是横幅自己画的，
+        色块的上边缘正好落在横幅顶部，于是横幅和顶栏之间硬生生多出一道渐变边。
+        由背景层从 y=0 铺下来，上半段就和顶栏连成一片，唯一的过渡留在底部。
+        """
+        w, band = self.width(), self._band
+        dpr = self._dpr()
+        token = (theme.current(), w, band, round(dpr, 2))
+        if self._tint is not None and self._tint_token == token:
+            return self._tint
+        self._tint_token = token
+        self._tint = None
+        if w <= 0 or band <= 0:
+            return None
+        tw, th = int(w * dpr), int(band * dpr)
+        pm = QPixmap(tw, th)
+        pm.fill(Qt.transparent)
+        p = QPainter(pm)
+        accent = QColor(theme.ACCENT)
+        peak = 34 if not theme.IS_DARK else 44
+        side = QLinearGradient(0, 0, tw * 0.9, 0)
+        side.setColorAt(0.0, QColor(accent.red(), accent.green(), accent.blue(), peak))
+        side.setColorAt(1.0, QColor(accent.red(), accent.green(), accent.blue(), 0))
+        p.fillRect(0, 0, tw, th, side)
+        p.setCompositionMode(QPainter.CompositionMode_DestinationIn)
+        fade = QLinearGradient(0, 0, 0, th)
+        fade.setColorAt(0.0, QColor(0, 0, 0, 255))
+        fade.setColorAt(0.62, QColor(0, 0, 0, 245))
+        fade.setColorAt(1.0, QColor(0, 0, 0, 0))     # 只有底边化开
+        p.fillRect(0, 0, tw, th, fade)
+        p.end()
+        pm.setDevicePixelRatio(dpr)
+        self._tint = pm
+        return pm
+
     def _ensure_baked(self) -> Optional[QPixmap]:
         if self._baked is not None:
             return self._baked
@@ -293,6 +335,10 @@ class Backdrop(QWidget):
         self._ensure_bg()
         if self._bg is not None:
             p.drawPixmap(0, 0, self._bg)   # 纱与顶部压深都已烘焙在里面，这里只是一次贴图
+        elif not getattr(theme, "HAS_PHOTO", True):
+            tint = self._ensure_tint()     # 纯色主题：底色由 Shell 的 QSS 画，这里只补顶部色块
+            if tint is not None:
+                p.drawPixmap(0, 0, tint)
 
         if self._engine is not None:
             if self._engine.baked and self._baked is not None:
