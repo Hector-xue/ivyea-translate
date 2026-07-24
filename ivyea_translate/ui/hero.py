@@ -17,7 +17,7 @@ from typing import List, Optional, Tuple
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (QColor, QFont, QFontMetricsF, QPainter, QPainterPath,
-                           QPen, QPixmap, QRadialGradient)
+                           QPixmap, QRadialGradient)
 from PySide6.QtWidgets import QHBoxLayout, QPushButton, QWidget
 
 from .. import quotes as quotes_mod
@@ -26,10 +26,19 @@ from . import theme
 HERO_HEIGHT = 96
 ROTATE_MS = 25_000       # 25 秒换一句：够读完，又不至于盯着同一句发呆
 FADE_MS = 420
-PAD_L = 24
+#: 名句左边距。下方页签文字、卡片正文都落在内容列 x=32（body 边距 16 +
+#: 页签/卡片 padding 16），横幅这层也从 32 起排才和它们对齐——早先的 24 会让
+#: 横幅比正文整整左突出 8px，一眼看着就"歪"。
+PAD_L = 32
 PAD_R = 96               # 右上角还有个"收起"按钮，别让字顶上去
 #: 正文字号阶梯 (字号, 允许行数)：从大往小试，取第一个放得下的
 SIZE_LADDER = ((25, 1), (22, 1), (20, 2), (18, 2), (16, 2), (15, 3), (14, 3))
+#: 软阴影的偏移环 (dx, dy, alpha)：把染暗的字掩膜按这一圈半透明地叠几次，
+#: 就得到一层柔和的下沉投影——主要往下沉 (0,1)/(0,2)，两侧只薄薄托一圈边。
+#: 比"给每个字描一圈粗实线"便宜得多（粗笔 stroke 一行长句要 ~20ms），
+#: 观感也从"字幕贴纸"变成"有层次的排版"。
+SHADOW_RING = ((0, 1, 96), (0, 2, 74), (1, 1, 52), (-1, 1, 52),
+               (1, 0, 44), (-1, 0, 44), (0, -1, 34))
 #: 名句就用界面字体。试过楷体、宋体，单看是好看，摆进这个界面里和其余所有文字
 #: 都不是一路人，横幅像贴了张别处剪来的纸——统一字体反而更整。
 def _quote_families():
@@ -172,7 +181,7 @@ class HeroBanner(QWidget):
         f = QFont()
         f.setFamilies(_quote_families())
         f.setPixelSize(px)
-        f.setLetterSpacing(QFont.PercentageSpacing, 103)
+        f.setLetterSpacing(QFont.PercentageSpacing, 100)
         return f
 
     @staticmethod
@@ -225,8 +234,8 @@ class HeroBanner(QWidget):
         """每帧只做一次贴图。
 
         横幅是背景层的上层兄弟：背景动效每秒重画 30 次，横幅会被一起带着重绘。
-        描边文字每帧现画要 13ms 上下，扛不住——所以整块字（柔光 + 描边正文 + 出处）
-        烘焙成一张位图缓存，只有换句 / 换主题 / 改尺寸才重烘。
+        文字每帧现画（掩膜 + 软阴影合成）扛不住——所以整块字（柔光 + 软阴影正文 +
+        出处）烘焙成一张位图缓存，只有换句 / 换主题 / 改尺寸才重烘。
         """
         w, h = self.width(), self.height()
         if w <= 0 or h <= 0:
@@ -280,79 +289,94 @@ class HeroBanner(QWidget):
         top = max(2.0, (h - block_h) / 2)
 
         light_ink = self._light_ink
+        # 出处右对齐吊在末行下方，与正文最宽那行的右端对齐——像书里引诗那样
+        # 收在诗句尾巴下面，而不是飘到整条横幅的最右端去
+        text_right = PAD_L + max(qfm.horizontalAdvance(ln) for ln in lines)
         if photo:
             ink = QColor("#FCFDFE") if light_ink else QColor(theme.TEXT_PRIMARY)
             if light_ink:
-                sub_ink = QColor(236, 240, 246)
+                sub_ink = QColor(238, 242, 247)
             else:
                 sub_ink = QColor(theme.TEXT_PRIMARY)
-                sub_ink.setAlpha(215)
+                sub_ink.setAlpha(225)
             self._paint_text_scrim(p, h, top, block_h, avail, light_ink)
+            self._paint_glyphs(p, w, h, lines, qf, qfm, line_h, top,
+                               src_font, sfm, src_h, src_text, text_right,
+                               ink, sub_ink, light_ink)
         else:
-            ink = QColor(theme.HERO_INK)
-            sub_ink = QColor(theme.HERO_SUB_INK)
-        # 描边色永远和字色相反：白字包黑边、黑字包白边
-        halo = QColor(2, 4, 10, 165) if light_ink else QColor(255, 255, 255, 215)
-
-        p.setFont(qf)
-        y = top
-        for ln in lines:
-            if photo:
-                baseline = y + (line_h + qfm.ascent() - qfm.descent()) / 2
-                self._stroked_text(p, ln, qf, PAD_L, baseline, ink, halo)
-            else:
-                p.setPen(ink)
+            p.setFont(qf)
+            p.setPen(QColor(theme.HERO_INK))
+            y = top
+            for ln in lines:
                 p.drawText(QRectF(PAD_L, y, avail, line_h),
                            Qt.AlignLeft | Qt.AlignVCenter, ln)
-            y += line_h
-
-        # 出处：右对齐吊在末行下方，与正文右边界对齐
-        p.setFont(src_font)
-        if photo:
-            sx = PAD_L + avail - sfm.horizontalAdvance(src_text)
-            sy = y + (src_h + sfm.ascent() - sfm.descent()) / 2
-            self._stroked_text(p, src_text, src_font, sx, sy, sub_ink, halo, width=2.6)
-        else:
-            p.setPen(sub_ink)
-            p.drawText(QRectF(PAD_L, y, avail, src_h),
+                y += line_h
+            p.setFont(src_font)
+            p.setPen(QColor(theme.HERO_SUB_INK))
+            p.drawText(QRectF(PAD_L, y, text_right - PAD_L, src_h),
                        Qt.AlignRight | Qt.AlignVCenter, src_text)
 
-    def _stroked_text(self, p: QPainter, text: str, font: QFont, x: float,
-                      baseline: float, ink: QColor, halo: QColor,
-                      width: float = 2.8) -> None:
-        """描边 + 填充地画一行字。
+    def _paint_glyphs(self, p: QPainter, w: int, h: int, lines: List[str],
+                      qf: QFont, qfm: QFontMetricsF, line_h: float, top: float,
+                      src_font: QFont, sfm: QFontMetricsF, src_h: float,
+                      src_text: str, text_right: float, ink: QColor,
+                      sub_ink: QColor, light_ink: bool) -> None:
+        """照片主题下，用柔和投影而非硬描边把字压在照片上。
 
-        花花绿绿的照片上，光靠背后糊一块底是压不住的：光晕罩得住左边就罩不住
-        右下角的出处。给字包一圈对比色的边，背景再花也认得出，而且不用把照片
-        糊掉一大片。字形路径按 (文本, 字号) 缓存，横幅每帧重绘也不会重复构建。
+        花花绿绿的照片上光靠背后糊一块底压不住，早先给每个字包一圈实心对比色边，
+        读起来却像字幕贴纸——和界面其余排版不是一路人。这里换成真正的投影：把整块
+        字（正文 + 出处）先画进一张掩膜位图，用 SourceIn 染成暗/亮色做阴影母版，再按
+        `SHADOW_RING` 半透明地偏移叠几次得到柔和下沉的影子，最后盖上清晰正文。
+
+        全程只是位图填充与贴图（没有粗笔 stroke），bake 一次 ~4ms，比逐字描边还快；
+        且这一切都发生在 `_ensure_layer` 烘焙缓存图时，`paintEvent` 逐帧照旧只贴一张图。
         """
-        key = (text, font.pixelSize(), font.families()[0] if font.families() else "")
-        cache = getattr(self, "_path_cache", {})
-        path = cache.get(key)
-        if path is None:
+        # 1) 整块字画进掩膜（正文用 ink 色、出处用 sub_ink 色，各自的不透明度也带上）
+        mask = QPixmap(int(w), int(h))
+        mask.fill(Qt.transparent)
+        mp = QPainter(mask)
+        mp.setRenderHint(QPainter.Antialiasing, True)
+        mp.setPen(Qt.NoPen)
+        y = top
+        for ln in lines:
+            baseline = y + (line_h + qfm.ascent() - qfm.descent()) / 2
             path = QPainterPath()
-            path.addText(0.0, 0.0, font, text)
-            if len(cache) > 24:          # 一句最多几行，缓存不会长
-                cache.clear()
-            cache[key] = path
-            self._path_cache = cache
-        p.save()
-        p.translate(x, baseline)
-        pen = QPen(halo, width)
-        pen.setJoinStyle(Qt.RoundJoin)
-        p.setPen(pen)
-        p.setBrush(Qt.NoBrush)
-        p.drawPath(path)
-        p.setPen(Qt.NoPen)
-        p.setBrush(ink)
-        p.drawPath(path)
-        p.restore()
+            path.addText(PAD_L, baseline, qf, ln)
+            mp.setBrush(ink)
+            mp.drawPath(path)
+            y += line_h
+        sx = max(float(PAD_L), text_right - sfm.horizontalAdvance(src_text))
+        sy = y + (src_h + sfm.ascent() - sfm.descent()) / 2
+        src_path = QPainterPath()
+        src_path.addText(sx, sy, src_font, src_text)
+        mp.setBrush(sub_ink)
+        mp.drawPath(src_path)
+        mp.end()
+
+        # 2) 由掩膜染出阴影母版：白字配暗影、黑字配亮影
+        shadow = QPixmap(mask.size())
+        shadow.fill(Qt.transparent)
+        sp = QPainter(shadow)
+        sp.drawPixmap(0, 0, mask)
+        sp.setCompositionMode(QPainter.CompositionMode_SourceIn)
+        sp.fillRect(shadow.rect(),
+                    QColor(2, 4, 10) if light_ink else QColor(255, 255, 255))
+        sp.end()
+
+        # 3) 偏移叠加成软阴影，再盖上清晰正文
+        for dx, dy, alpha in SHADOW_RING:
+            p.setOpacity(alpha / 255.0)
+            p.drawPixmap(dx, dy, shadow)
+        p.setOpacity(1.0)
+        p.drawPixmap(0, 0, mask)
 
     def _paint_text_scrim(self, p: QPainter, h: int, top: float,
                           block_h: float, avail: float, light_ink: bool) -> None:
         base = QColor(6, 8, 14) if light_ink else QColor(255, 255, 255)
-        # 深色字压在亮照片上更吃力（叶丛、樱花本身就花），柔光要更实一点
-        peak, mid = (96, 42) if light_ink else (110, 52)
+        # 可读性现在主要靠字自带的软阴影，这层柔光只做辅助——压薄一点，
+        # 免得在叶丛、樱花这种亮照片上糊出一团看得见的"灰云"。
+        # 深色字压在亮照片上更吃力，仍留一点点更实
+        peak, mid = (56, 24) if light_ink else (66, 30)
         radius = max(260.0, (PAD_L + avail) * 0.62)
         p.save()
         p.translate(0.0, top + block_h / 2)
