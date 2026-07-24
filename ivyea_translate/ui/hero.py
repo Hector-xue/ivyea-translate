@@ -39,6 +39,10 @@ SIZE_LADDER = ((25, 1), (22, 1), (20, 2), (18, 2), (16, 2), (15, 3), (14, 3))
 #: 观感也从"字幕贴纸"变成"有层次的排版"。
 SHADOW_RING = ((0, 1, 96), (0, 2, 74), (1, 1, 52), (-1, 1, 52),
                (1, 0, 44), (-1, 0, 44), (0, -1, 34))
+#: 正文与出处之间的呼吸间距。像书里引诗那样：诗句和署名之间留口气，别贴脸。
+#: 只是"想要"的量——短句空间富裕给足，长到三行把 96px 占满时会自动收窄，
+#: 免得把出处挤出横幅底边（见 `_paint_block` 里按剩余高度 clamp）。
+SRC_GAP = 8
 #: 名句就用界面字体。试过楷体、宋体，单看是好看，摆进这个界面里和其余所有文字
 #: 都不是一路人，横幅像贴了张别处剪来的纸——统一字体反而更整。
 def _quote_families():
@@ -285,7 +289,11 @@ class HeroBanner(QWidget):
         src_h = sfm.height() * 1.35
         src_text = "—— " + self._quote[1]
 
-        block_h = line_h * len(lines) + src_h
+        # 正文与出处间留一口气；空间不够（长句三行占满）就自动收窄，
+        # 底部至少留 3px，绝不让出处被裁出横幅
+        body_h = line_h * len(lines)
+        gap = max(0.0, min(float(SRC_GAP), h - body_h - src_h - 3.0))
+        block_h = body_h + gap + src_h
         top = max(2.0, (h - block_h) / 2)
 
         light_ink = self._light_ink
@@ -300,7 +308,7 @@ class HeroBanner(QWidget):
                 sub_ink = QColor(theme.TEXT_PRIMARY)
                 sub_ink.setAlpha(225)
             self._paint_text_scrim(p, h, top, block_h, avail, light_ink)
-            self._paint_glyphs(p, w, h, lines, qf, qfm, line_h, top,
+            self._paint_glyphs(p, w, h, lines, qf, qfm, line_h, top, gap,
                                src_font, sfm, src_h, src_text, text_right,
                                ink, sub_ink, light_ink)
         else:
@@ -311,6 +319,7 @@ class HeroBanner(QWidget):
                 p.drawText(QRectF(PAD_L, y, avail, line_h),
                            Qt.AlignLeft | Qt.AlignVCenter, ln)
                 y += line_h
+            y += gap
             p.setFont(src_font)
             p.setPen(QColor(theme.HERO_SUB_INK))
             p.drawText(QRectF(PAD_L, y, text_right - PAD_L, src_h),
@@ -318,9 +327,9 @@ class HeroBanner(QWidget):
 
     def _paint_glyphs(self, p: QPainter, w: int, h: int, lines: List[str],
                       qf: QFont, qfm: QFontMetricsF, line_h: float, top: float,
-                      src_font: QFont, sfm: QFontMetricsF, src_h: float,
-                      src_text: str, text_right: float, ink: QColor,
-                      sub_ink: QColor, light_ink: bool) -> None:
+                      gap: float, src_font: QFont, sfm: QFontMetricsF,
+                      src_h: float, src_text: str, text_right: float,
+                      ink: QColor, sub_ink: QColor, light_ink: bool) -> None:
         """照片主题下，用柔和投影而非硬描边把字压在照片上。
 
         花花绿绿的照片上光靠背后糊一块底压不住，早先给每个字包一圈实心对比色边，
@@ -350,6 +359,7 @@ class HeroBanner(QWidget):
             mp.setBrush(ink)
             mp.drawPath(path)
             y += line_h
+        y += gap
         sx = max(float(PAD_L), text_right - sfm.horizontalAdvance(src_text))
         sy = y + (src_h + sfm.ascent() - sfm.descent()) / 2
         src_path = QPainterPath()
