@@ -331,8 +331,13 @@ class HeroBanner(QWidget):
         全程只是位图填充与贴图（没有粗笔 stroke），bake 一次 ~4ms，比逐字描边还快；
         且这一切都发生在 `_ensure_layer` 烘焙缓存图时，`paintEvent` 逐帧照旧只贴一张图。
         """
-        # 1) 整块字画进掩膜（正文用 ink 色、出处用 sub_ink 色，各自的不透明度也带上）
-        mask = QPixmap(int(w), int(h))
+        # 1) 整块字画进掩膜（正文用 ink 色、出处用 sub_ink 色，各自的不透明度也带上）。
+        # 高分屏（Windows 缩放 / Retina）下这张中间掩膜必须按 DPR 烘焙成物理分辨率，
+        # 否则它以 1x 建好、再被拉到物理像素铺开，整片字就糊了——外层 layer 有 DPR，
+        # 中间层没有就前功尽弃。
+        dpr = float(self.devicePixelRatioF() or 1.0)
+        mask = QPixmap(max(1, round(w * dpr)), max(1, round(h * dpr)))
+        mask.setDevicePixelRatio(dpr)
         mask.fill(Qt.transparent)
         mp = QPainter(mask)
         mp.setRenderHint(QPainter.Antialiasing, True)
@@ -355,6 +360,7 @@ class HeroBanner(QWidget):
 
         # 2) 由掩膜染出阴影母版：白字配暗影、黑字配亮影
         shadow = QPixmap(mask.size())
+        shadow.setDevicePixelRatio(dpr)
         shadow.fill(Qt.transparent)
         sp = QPainter(shadow)
         sp.drawPixmap(0, 0, mask)
