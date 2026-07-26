@@ -162,7 +162,8 @@ def test_status_flips_to_done_together_with_text(qapp):
     for piece in ["你好", "，", "世界"]:
         p.append_chunk(piece)
     p.set_done("你好，世界")
-    assert p.status_label.text() == "已翻译"
+    # 状态行还带着字符统计（本例没给原文，只报译文这一侧）
+    assert p.status_label.text().startswith("已翻译")
     assert p.result_view.toPlainText() == "你好，世界"
     assert not p._flush_timer.isActive()
     p.deleteLater()

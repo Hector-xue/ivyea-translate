@@ -369,6 +369,8 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         hint.setWordWrap(True)  # 窄窗自动换行，避免长文案顶宽导致横向溢出
         # 只给提示一个伸展位：再加 addStretch 会把空间对半分，宽窗里提示也被迫折行
         btn_row.addWidget(hint, 1)
+        self.source_count = self._count_label()
+        btn_row.addWidget(self.source_count)
         self.clear_btn = QPushButton("清空")
         self.clear_btn.setObjectName("Ghost")
         self.clear_btn.clicked.connect(self._clear_translate)
@@ -387,6 +389,8 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         rt = QLabel("译文")
         rt.setObjectName("CardTitle")
         res_head.addWidget(rt)
+        self.result_count = self._count_label()
+        res_head.addWidget(self.result_count)
         res_head.addStretch(1)
         self.copy_result_btn = QPushButton("复制译文")
         self.copy_result_btn.setObjectName("Ghost")
@@ -406,8 +410,82 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         self.source_edit.installEventFilter(self)
         # 源文被清空时译文一起清掉，不再残留上一条结果（译文只读，用户手删不掉）
         self.source_edit.textChanged.connect(self._on_source_changed)
+        # 源文这一侧还要按当前引擎给长文本提示，走带预警的绑定
+        self._bind_counter(self.source_edit, self.source_count, warn=True)
+        self._bind_counter(self.result_view, self.result_count)
         self._on_lang_style_changed()
         return _scrollable(page)
+
+    # ---------- 字符统计 ----------
+
+    @staticmethod
+    def _count_label() -> QLabel:
+        """计数标签：走全局 QSS 的 #Hint，换肤自动跟色（预警态才内联覆盖）。"""
+        lb = QLabel("")
+        lb.setObjectName("Hint")
+        return lb
+
+    def _bind_counter(self, edit, label: QLabel, warn: bool = False) -> None:
+        """把文本框的字符数常驻显示到 label 上。
+
+        只连 textChanged 就够：setPlainText（清空、历史回填、失败回填）、流式
+        insertPlainText、用户手敲，全都会发这个信号，不用在每条业务分支里补调用。
+        """
+        label.setProperty("countWarn", warn)
+        edit.textChanged.connect(lambda e=edit, l=label: self._sync_counter(e, l))
+        self._sync_counter(edit, label)
+
+    def _sync_counter(self, edit, label: QLabel) -> None:
+        from .. import textstats
+
+        text = edit.toPlainText()
+        stats = textstats.count(text)
+        label.setText(textstats.brief(stats))
+        tip = textstats.detail(stats)
+        color = ""
+        if label.property("countWarn"):
+            note, color = self._length_warning(stats.chars, text)
+            if note:
+                tip = f"{tip}\n\n{note}" if tip else note
+        label.setToolTip(tip)
+        # 内联样式会盖过全局 QSS，换肤后不跟色 → restyle() 里会重跑本方法补上
+        label.setStyleSheet(f"color: {color}; background: transparent;" if color else "")
+
+    def _length_warning(self, chars: int, text: str = "") -> tuple:
+        """长文本提示（文案, 颜色）。只说代码里真实存在的限制，不编阈值。
+
+        - 免费引擎 MAX_CHUNK：超了会切块串行请求，内容不丢但段间互不参照
+        - double_copy.max_chars：真硬限，超了双击复制**静默不翻**（clipboard_watch），
+          主窗口本身不受这个限制，得说清楚，否则用户以为这里也翻不了
+        """
+        from ..free_engine import MAX_CHUNK, split_for_translate, uses_free_engine
+
+        hard = int(self.cfg.get("double_copy.max_chars", 3000) or 0)
+        if hard > 0 and chars > hard:
+            return (f"超过 {hard} 字符：双击复制的划词翻译不会触发"
+                    f"（设置 → 划词翻译 可调）。主窗口不受此限，仍会完整翻译。",
+                    theme.DANGER)
+        if chars > MAX_CHUNK and uses_free_engine(self.cfg):
+            # 段数直接问真正干活的那个切分函数，别按 chars/MAX_CHUNK 估——它是按
+            # 段落边界切的，估出来的数和实际请求数对不上
+            n = len(split_for_translate(text))
+            return (f"免费引擎按 {MAX_CHUNK} 字符切段，本次分 {n} 段分别请求，"
+                    f"段与段之间互不参照。配置 API Key 改用大模型可整篇翻译。",
+                    theme.ACCENT)
+        return ("", "")
+
+    def _refresh_counters(self) -> None:
+        """换肤 / 换引擎后重算各计数（预警色是内联样式，不跟全局 QSS 走）。"""
+        for edit_name, label_name in (
+            ("source_edit", "source_count"),
+            ("result_view", "result_count"),
+            ("email_source", "email_source_count"),
+            ("email_body", "email_body_count"),
+        ):
+            edit = getattr(self, edit_name, None)
+            label = getattr(self, label_name, None)
+            if edit is not None and label is not None:
+                self._sync_counter(edit, label)
 
     def _on_source_changed(self) -> None:
         if self.source_edit.toPlainText().strip():
@@ -591,6 +669,8 @@ class MainWindow(ShellWindowMixin, QMainWindow):
 
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
+        self.email_source_count = self._count_label()
+        btn_row.addWidget(self.email_source_count)
         self.email_clear_btn = QPushButton("清空")
         self.email_clear_btn.setObjectName("Ghost")
         self.email_clear_btn.clicked.connect(self._clear_email)
@@ -628,6 +708,8 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         self.email_body_label = QLabel("正文")
         self.email_body_label.setObjectName("CardTitle")
         body_head.addWidget(self.email_body_label)
+        self.email_body_count = self._count_label()
+        body_head.addWidget(self.email_body_count)
         body_head.addStretch(1)
         copy_body_btn = QPushButton("复制")
         copy_body_btn.setObjectName("Ghost")
@@ -652,6 +734,10 @@ class MainWindow(ShellWindowMixin, QMainWindow):
 
         lay.addWidget(card)
         lay.addWidget(result_card, 1)
+        # 写作页走的是大模型（免费引擎不会改写），不受免费引擎切段和划词上限影响，
+        # 所以只计数不预警——在这里报那两条限制是误导
+        self._bind_counter(self.email_source, self.email_source_count)
+        self._bind_counter(self.email_body, self.email_body_count)
         self._on_scenario_changed()
         return _scrollable(page)
 
@@ -1279,6 +1365,7 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         if hasattr(self, "email_backtrans"):
             self.email_backtrans.setStyleSheet(
                 f"color: {theme.TEXT_SECONDARY}; font-size: 13px;")
+        self._refresh_counters()  # 预警色是内联样式，换肤不会自己跟上
         self._sync_shell_state()
         self.update()
 
@@ -1383,6 +1470,8 @@ class MainWindow(ShellWindowMixin, QMainWindow):
             idx = self.lang_combo.findData("auto")
             if idx >= 0:
                 self.lang_combo.setItemText(idx, self._auto_label())
+        # 引擎/Key/划词上限都可能刚被改过，长文本提示要按新配置重算
+        self._refresh_counters()
         self.save_status.setText("已保存 ✓")
         from PySide6.QtCore import QTimer
 

@@ -181,7 +181,12 @@ class TranslationPopup(QWidget):
         if width < 460:
             brand.setVisible(False)
             dot.setVisible(False)
-        self.status_label = QLabel("翻译中…")
+        # 字符统计并进状态行，不另起控件：标题行本来就有留白，而弹窗每多一行
+        # 都要从用户正在读的内容里抠高度
+        self._compact_counts = width < 460   # 窄弹窗同款阈值：收成 "128→96"
+        self._status_base = "翻译中…"
+        self._status_failed = False
+        self.status_label = QLabel(self._status_base)
         self.status_label.setObjectName("Hint")
         head.addWidget(self.status_label)
         head.addStretch(1)
@@ -264,6 +269,7 @@ class TranslationPopup(QWidget):
         self._result_parts: list = []
         self._card = card
         self._install_hover_tracking(card)
+        self._sync_status()   # 划词弹窗建的时候原文就有了，字符数当场可见
 
     def _brand_mark(self) -> QLabel:
         """品牌 logo 小标；资源缺失（未打包/被删）时退回一枚品牌绿圆点。"""
@@ -286,7 +292,9 @@ class TranslationPopup(QWidget):
     # ---- 两段式（截图翻译）：先"识别中"，OCR 完成后回填原文 ----
 
     def set_status(self, text: str) -> None:
-        self.status_label.setText(text)
+        self._status_base = text
+        self._status_failed = False
+        self._sync_status()
         self.repaint()
 
     def set_original(self, text: str) -> None:
@@ -294,8 +302,26 @@ class TranslationPopup(QWidget):
         if self._orig_view is not None:
             self._orig_view.setPlainText(text)
             self._set_original_visible(True)
+        self._sync_status()   # OCR 回填后原文字符数才有值
         self._relayout()
         self.repaint()
+
+    # ---- 字符统计（并进状态行） ----
+
+    def _sync_status(self) -> None:
+        """状态行 = 基础文案 · 字符统计。失败时只留错误文案，别再报数添乱。"""
+        from .. import textstats
+
+        base = self._status_base
+        if getattr(self, "_status_failed", False):
+            self.status_label.setText(base)
+            self.status_label.setToolTip("")
+            return
+        result = self.result_view.toPlainText()
+        counts = textstats.pair_brief(
+            len(self.original_text or ""), len(result), compact=self._compact_counts)
+        self.status_label.setText(f"{base} · {counts}" if counts else base)
+        self.status_label.setToolTip(textstats.pair_detail(self.original_text or "", result))
 
     def _set_original_visible(self, visible: bool) -> None:
         for w in (self._orig_toggle, self._orig_view, self._divider):
@@ -334,6 +360,9 @@ class TranslationPopup(QWidget):
     def _on_flush_timeout(self) -> None:
         self._flush_pending(self.result_view, "_pending_result")
         self._flush_pending(self._explain_view, "_pending_explain")
+        # 计数跟着这一次合并刷新走，不去连 textChanged：那条路每来一个 SSE 片段
+        # 就触发一次，正是上面注释里记着的"把主线程吃满"的老路
+        self._sync_status()
         # Windows 实测：不抢焦点的置顶半透明窗，update() 走的异步重绘偶尔要等
         # 下一次输入事件才上屏（用户反馈"点一下鼠标结果才出来"）。流式刷新和
         # 落定各补一次同步 repaint，把像素立刻推上屏幕。
@@ -351,7 +380,9 @@ class TranslationPopup(QWidget):
         self._pending_result = []
         self.result_view.setPlainText(full_text)
         self._result_parts = [full_text]
-        self.status_label.setText("已翻译")
+        self._status_base = "已翻译"
+        self._status_failed = False
+        self._sync_status()
         self._relayout()
         self.repaint()  # 见 _on_flush_timeout：确保结果立刻上屏，不等下次输入事件
 
@@ -359,7 +390,9 @@ class TranslationPopup(QWidget):
         log.info("弹窗翻译失败：%s", message)
         self._flush_timer.stop()
         self._pending_result = []
-        self.status_label.setText("失败")
+        self._status_base = "失败"
+        self._status_failed = True
+        self._sync_status()
         self.result_view.setPlainText(message)
         self.result_view.setStyleSheet(f"color: {theme.ACCENT};")
         self._relayout()

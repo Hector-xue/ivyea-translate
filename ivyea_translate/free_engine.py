@@ -367,3 +367,18 @@ def resolve_engine(cfg):
         return client_from_config(cfg)
     api_key = (cfg.get("provider.api_key") or "").strip()
     return client_from_config(cfg) if api_key else free_engine
+
+
+def uses_free_engine(cfg) -> bool:
+    """当前配置下这次翻译会不会走免费引擎（纯谓词，可单测）。
+
+    界面上要按引擎给提示（免费引擎超过 MAX_CHUNK 会分段），但不能为了问一句
+    就去调 resolve_engine：那会真的构造一个 LLM 客户端，llm 模式没配 Key 时还
+    直接抛 LLMError。判定条件必须和上面 resolve_engine 保持一致，改一处要改两处。
+    """
+    mode = cfg.get("translate.engine", "auto")
+    if mode == "free":
+        return True
+    if mode == "llm":
+        return False
+    return not (cfg.get("provider.api_key") or "").strip()

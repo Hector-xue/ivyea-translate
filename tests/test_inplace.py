@@ -515,3 +515,62 @@ def test_overlay_paints_hit_base_over_transparent_area(qapp):
     c = img.pixelColor(sel.center())
     assert c.alpha() > 0
     ov.close()
+
+
+# ---------- 字符统计（工具条小标签，跟按钮组一起收放） ----------
+
+def test_overlay_counts_hidden_while_loading(qapp):
+    """翻译中数字还没定，摆出来只会和"翻译中…"挤成一团。"""
+    from PySide6.QtCore import QRect
+
+    from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
+
+    ov = InPlaceOverlay(QRect(0, 0, 400, 200), _shot(qapp), 1.0)
+    assert not ov._toolbar.counts.isVisibleTo(ov._toolbar)   # loading
+    ov.prepare([OcrBlock("Hello there", 20, 30, 300, 40, line_h=18)])
+    assert not ov._toolbar.counts.isVisibleTo(ov._toolbar)   # 翻译中，仍收着
+    ov.close()
+
+
+def test_overlay_counts_show_after_finish(qapp):
+    """完成态：[logo] 11→2 复制译文 | …"""
+    from PySide6.QtCore import QRect
+
+    from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
+
+    ov = InPlaceOverlay(QRect(0, 0, 400, 200), _shot(qapp), 1.0)
+    ov.set_blocks([OcrBlock("Hello there", 20, 30, 300, 40, line_h=18)], ["你好"])
+    counts = ov._toolbar.counts
+    assert counts.isVisibleTo(ov._toolbar)
+    assert counts.text() == "11→2"          # 工具条挤，永远走紧凑式
+    assert "原文：" in counts.toolTip() and "译文：" in counts.toolTip()
+    ov.close()
+
+
+def test_overlay_counts_sum_all_blocks(qapp):
+    """多段是用 \\n\\n 拼起来的，计数要按拼接后的整篇算，和复制出来的一致。"""
+    from PySide6.QtCore import QRect
+
+    from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
+
+    ov = InPlaceOverlay(QRect(0, 0, 400, 200), _shot(qapp), 1.0)
+    blocks = [OcrBlock("abc", 20, 30, 100, 20, line_h=14),
+              OcrBlock("de", 20, 60, 100, 20, line_h=14)]
+    ov.set_blocks(blocks, ["一二", "三"])
+    src = len(ov.originals_text())      # "abc\n\nde" = 7
+    dst = len(ov.translations_text())   # "一二\n\n三" = 5
+    assert ov._toolbar.counts.text() == f"{src}→{dst}"
+    ov.close()
+
+
+def test_overlay_toolbar_stays_inside_window_with_counts(qapp):
+    """工具条加了计数会变宽——必须先填计数再收状态，否则按旧宽度锚位、数字探出窗外。"""
+    from PySide6.QtCore import QRect
+
+    from ivyea_translate.ui.inplace_overlay import InPlaceOverlay
+
+    ov = InPlaceOverlay(QRect(0, 0, 400, 200), _shot(qapp), 1.0)
+    ov.set_blocks([OcrBlock("Hello there world", 20, 30, 300, 40, line_h=18)], ["你好世界"])
+    tb = ov._toolbar
+    assert tb.x() >= 0 and tb.x() + tb.width() <= ov.width()
+    ov.close()

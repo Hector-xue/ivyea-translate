@@ -195,6 +195,14 @@ class OverlayToolbar(QWidget):
         lay.setContentsMargins(8, 3, 6, 3)
         lay.setSpacing(2)
         lay.addWidget(self._brand_mark())
+        # 字符统计：紧跟品牌小标，不可点。工具条横向空间是按像素抠的，
+        # 永远走紧凑式 "128→96"，完整口径进 tooltip
+        self.counts = QLabel("")
+        self.counts.setVisible(False)
+        self.counts.setStyleSheet(
+            f"color: {theme.TEXT_MUTED}; font-size: 12px; padding: 4px 6px; "
+            f"background: transparent;")
+        lay.addWidget(self.counts)
         self.status = QLabel("")
         self.status.setVisible(False)
         lay.addWidget(self.status)
@@ -246,11 +254,23 @@ class OverlayToolbar(QWidget):
         lb.setStyleSheet(f"color: {theme.ACCENT}; font-size: 10px; background: transparent;")
         return lb
 
+    def set_counts(self, source: str, result: str) -> None:
+        """记下原文/译文字符数；真正显不显示由 set_status 的收放决定。"""
+        from .. import textstats
+
+        self._counts_text = textstats.pair_brief(
+            len(source or ""), len(result or ""), compact=True)
+        self.counts.setText(self._counts_text)
+        self.counts.setToolTip(textstats.pair_detail(source or "", result or ""))
+        self.adjustSize()
+
     def set_status(self, text: Optional[str], failed: bool = False) -> None:
         """loading/失败期间动作按钮让位给状态文字；text=None 恢复按钮组。
 
-        钉住/✕ 不参与收放：翻译中也可能想钉住（防切窗自关）或提前关掉。"""
+        钉住/✕ 不参与收放：翻译中也可能想钉住（防切窗自关）或提前关掉。
+        字符统计跟着按钮组一起收放：翻译中数字还没定，摆出来只会和状态文字挤。"""
         actions = (self.btn_copy_res, self.btn_copy_src, self.btn_orig, self.btn_popup)
+        self.counts.setVisible(not text and bool(getattr(self, "_counts_text", "")))
         if text:
             color = theme.DANGER if failed else theme.ACCENT
             self.status.setStyleSheet(
@@ -411,6 +431,9 @@ class InPlaceOverlay(QWidget):
         # 一张卡都没有时保留状态文案（"没有识别到文字"之类），否则就成了空窗
         if any(card is not None for card in self._cards):
             self._status = None
+            # 先填计数再收状态：set_status 内部 adjustSize 要按"含计数"的宽度量，
+            # 顺序反了工具条就按旧宽度锚位，数字会探出去
+            self._toolbar.set_counts(self.originals_text(), self.translations_text())
             self._toolbar.set_status(None)  # 状态让位，按钮组回来
             self._toolbar.btn_copy_res.setEnabled(True)
             self._toolbar.btn_popup.setEnabled(True)
