@@ -166,3 +166,24 @@ ivyea_translate/
     ├── popup.py         # 可拖动可调大小结果弹窗 + 智能定位（纯函数）
     └── capture_overlay.py # 截图框选层（DPI 换算集中于此）
 ```
+
+---
+
+## ☕ 请作者喝杯咖啡
+
+Ivyea Translate 一直是免费开源、没有内购也不卖会员的。如果这个小工具帮你省下了时间，欢迎请作者喝杯咖啡——一杯咖啡就是下个版本的动力。当然，点个 Star、提个 Issue、写篇使用心得，同样是很大的支持。
+
+- **公众号**：Ivyea 的精神股东们（版本更新、用法与踩坑复盘都发在这里）
+- **作者**：薛海涛
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="docs/assets/wechat-pay-qr.png" alt="微信收款码" width="300" />
+      <br />
+      <strong>微信扫码 · 支持作者</strong>
+      <br />
+      <sub>金额随意，心意都收到了</sub>
+    </td>
+  </tr>
+</table>
