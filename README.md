@@ -173,9 +173,6 @@ ivyea_translate/
 
 Ivyea Translate 一直是免费开源的。如果这个小工具帮你省下了时间，欢迎请作者喝杯咖啡——一杯咖啡就是下个版本的动力。当然，点个 Star，同样是很大的支持。
 
-- **公众号**：Ivyea 的精神股东们
-- **作者**：薛海涛
-
 <table>
   <tr>
     <td align="center">
