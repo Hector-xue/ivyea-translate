@@ -29,13 +29,29 @@ _pool_lock = threading.Lock()
 _pool: Dict[str, httpx.Client] = {}
 
 
+def is_loopback_url(url: str) -> bool:
+    """纯函数：地址是不是本机回环（本地 llama-server 之类）。"""
+    from urllib.parse import urlsplit
+
+    host = (urlsplit(url).hostname or "").lower()
+    return host in ("127.0.0.1", "localhost", "::1") or host.startswith("127.")
+
+
 def _http_client(base_url: str) -> httpx.Client:
-    """按 base_url 取长连接 Client（线程安全，跨请求复用连接）。"""
+    """按 base_url 取长连接 Client（线程安全，跨请求复用连接）。
+
+    回环地址一律 trust_env=False：httpx 会把系统/环境变量里的代理（国内机器上常年
+    开着 Clash 之类）也套到 127.0.0.1 上，本地 llama-server 的请求全被代理拒成
+    502 Bad Gateway——用户日志里"本地模型就绪却翻译 502"就是这个。llama-server
+    自己从不发 502。
+    """
     with _pool_lock:
         client = _pool.get(base_url)
         if client is None or client.is_closed:
+            local = is_loopback_url(base_url)
             client = httpx.Client(
-                http2=_HTTP2, timeout=httpx.Timeout(60.0, connect=10.0))
+                http2=_HTTP2 and not local, trust_env=not local,
+                timeout=httpx.Timeout(60.0, connect=10.0))
             _pool[base_url] = client
         return client
 

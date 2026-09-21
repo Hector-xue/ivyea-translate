@@ -28,3 +28,22 @@ def test_prewarm_never_raises():
     llm.prewarm_async("https://127.0.0.1:1")    # 必然连不上，也不能抛
     time.sleep(0.1)                             # 让后台线程跑起来（异常会被吞掉）
     llm.reset_http_pool()
+
+
+def test_loopback_clients_ignore_system_proxy(monkeypatch):
+    """本地 llama-server 的请求不能走系统代理：用户机器上 Clash 把 127.0.0.1 也代理了，
+    llama-server 从不发 502，日志里的 502 Bad Gateway 全是代理回的。"""
+    from ivyea_translate import llm
+
+    assert llm.is_loopback_url("http://127.0.0.1:53003/v1")
+    assert llm.is_loopback_url("http://localhost:8080/v1")
+    assert not llm.is_loopback_url("https://api.deepseek.com/v1")
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:7890")
+    monkeypatch.setenv("ALL_PROXY", "http://127.0.0.1:7890")
+    llm.reset_http_pool()
+    local = llm._http_client("http://127.0.0.1:53003/v1")
+    remote = llm._http_client("https://api.deepseek.com/v1")
+    assert not any(str(k).startswith("http") and v is not None for k, v in local._mounts.items())  # 未挂代理
+    assert any(v is not None for v in remote._mounts.values())                                     # 远端有代理
+    assert local.trust_env is False and remote.trust_env is True
+    llm.reset_http_pool()

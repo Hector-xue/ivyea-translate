@@ -322,7 +322,9 @@ class MainWindow(ShellWindowMixin, QMainWindow):
 
         # 默认高度按"翻译页正好装下两张卡"给，之前 780 高多出一大片空底
         self.resize(760, 620)
-        self.setMinimumSize(460, 430)  # 允许自由缩小；各页有滚动容器兜底
+        # 各页有滚动容器兜底纵向；横向的下限由内容里不能再窄的那排决定（外观卡 3 列主题
+        # 缩略图 + 动效/横幅/透明度一排 ≈ 513px），窄于它右边会被裁而不是出滚动条
+        self.setMinimumSize(600, 430)
 
     # ================= 翻译页 =================
 
@@ -1224,14 +1226,6 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         self.banner_check.setChecked(bool(self.cfg.get("ui.theme_banner", True)))
         self.banner_check.toggled.connect(self._on_banner_toggled)
         opts.addWidget(self.banner_check)
-        if sys.platform == "win32":
-            self.native_frame_check = QCheckBox("使用系统标题栏（重启后生效）")
-            self.native_frame_check.setToolTip(
-                "改用 Windows 原生标题栏和边框（少了圆角投影）。"
-                "如果遇到「显示桌面后主窗自己冒出来」或「右上角按钮点不动」，勾上它可以绕开")
-            self.native_frame_check.setChecked(bool(self.cfg.get("ui.native_frame", False)))
-            self.native_frame_check.toggled.connect(self._on_native_frame_toggled)
-            opts.addWidget(self.native_frame_check)
 
         opts.addSpacing(6)
         opacity_label = QLabel("前景透明度")
@@ -1254,6 +1248,16 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         opts.addWidget(self.opacity_value)
         opts.addStretch(1)
         v.addLayout(opts)
+        if sys.platform == "win32":
+            # 单独一行：塞进上面那排会把整页最小宽度顶到视口之外（v0.35.3 的锅：
+            # 设置页横向滚动已关，超宽不会出滚动条而是直接被裁掉右边）
+            self.native_frame_check = QCheckBox("使用系统标题栏（重启后生效）")
+            self.native_frame_check.setToolTip(
+                "改用 Windows 原生标题栏和边框（少了圆角投影）。"
+                "如果遇到「显示桌面后主窗自己冒出来」或「右上角按钮点不动」，勾上它可以绕开")
+            self.native_frame_check.setChecked(bool(self.cfg.get("ui.native_frame", False)))
+            self.native_frame_check.toggled.connect(self._on_native_frame_toggled)
+            v.addWidget(self.native_frame_check)
 
         return card
 
@@ -1680,6 +1684,11 @@ class MainWindow(ShellWindowMixin, QMainWindow):
 
                 msg, wparam, lparam = winshell.read_msg(message)
                 text = winshell.describe_event(msg, wparam, lparam)
+                if msg == winshell.WM_SIZE:
+                    # 拖拽缩放时 RESTORED 每十几毫秒来一次，只记状态变化
+                    if wparam == getattr(self, "_last_size_kind", None):
+                        text = ""
+                    self._last_size_kind = wparam
                 if text:
                     qt_min = bool(self.windowState() & Qt.WindowMinimized)
                     iconic = winshell.is_iconic(int(self.winId()))
