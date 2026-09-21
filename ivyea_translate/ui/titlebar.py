@@ -47,7 +47,16 @@ def apply_frameless(win) -> bool:
     """
     if MACOS:
         return False
-    win.setWindowFlags(win.windowFlags() | Qt.FramelessWindowHint)
+    # 必须显式带上最小化/最大化/系统菜单提示。Qt 的 Windows 插件只在 flags 恰好等于
+    # Qt::Window 时才自动补这几项（qwindowswindow.cpp fixTopLevelWindowFlags）；一加
+    # Frameless 就不补了，原生窗口没有 WS_MINIMIZEBOX，Windows 便当它"不可最小化"：
+    # Win+D/显示桌面 不是最小化它而是临时藏起，任何窗口一激活 shell 又把它原样放回
+    # ——就是"点开别的软件主窗自己冒出来"；被 shell 强行 show 回来后 Qt 的可见状态
+    # 与系统脱节，标题栏三个按钮点了没反应。顺带修好任务栏点图标不能最小化。
+    win.setWindowFlags(
+        win.windowFlags() | Qt.FramelessWindowHint | Qt.WindowSystemMenuHint
+        | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint
+    )
     win.setAttribute(Qt.WA_TranslucentBackground)
     return True
 

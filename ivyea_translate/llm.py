@@ -52,10 +52,24 @@ def reset_http_pool() -> None:
             pass
 
 
-def prewarm_async(base_url: str) -> None:
-    """后台对 base_url 做一次 TLS 握手（不发正式请求、不耗 token）。绝不抛。"""
+_PREWARM_MIN_GAP_S = 20.0
+_last_prewarm: Dict[str, float] = {}
+
+
+def prewarm_async(base_url: str, force: bool = False) -> None:
+    """后台对 base_url 做一次 TLS 握手（不发正式请求、不耗 token）。绝不抛。
+
+    启动时和每次热键按下都会调（用户框选期间把连接热起来）；同一地址 20 秒内
+    重复调用忽略，别把热键当成 GET 洪水。
+    """
     if not (base_url or "").strip():
         return
+    import time
+
+    now = time.monotonic()
+    if not force and now - _last_prewarm.get(base_url, 0.0) < _PREWARM_MIN_GAP_S:
+        return
+    _last_prewarm[base_url] = now
 
     def run():
         try:

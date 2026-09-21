@@ -22,6 +22,11 @@ def test_window_is_frameless(qapp, tmp_path):
     win = _make_window(qapp, tmp_path)
     assert win._frameless is True
     assert win.windowFlags() & Qt.FramelessWindowHint
+    # 无边框窗必须显式保留最小化/最大化提示，否则 Windows 视其为不可最小化：
+    # Win+D 后点开任何软件主窗都会自己冒出来，且标题栏按钮失灵（见 apply_frameless）
+    assert win.windowFlags() & Qt.WindowMinimizeButtonHint
+    assert win.windowFlags() & Qt.WindowMaximizeButtonHint
+    assert win.windowFlags() & Qt.WindowSystemMenuHint
     assert win.titlebar.min_btn is not None
     assert win.titlebar.max_btn is not None
     assert win.titlebar.close_btn is not None

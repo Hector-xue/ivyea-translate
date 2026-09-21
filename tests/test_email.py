@@ -160,3 +160,73 @@ def test_backtranslation_includes_subject(qapp, tmp_path):
     assert got == ["Just a message."]
     win.really_quit = True
     win.close()
+
+
+def test_compose_under_free_engine_translates_directly(qapp, tmp_path, monkeypatch):
+    """免费引擎模式下写作助手不能锁死：降级为直译（不带改写 prompt），并明说。"""
+    from ivyea_translate.config import Config
+    from ivyea_translate.ui import main_window as mw
+
+    cfg = Config(tmp_path / "c.json")
+    cfg.set("translate.engine", "free")
+    win = mw.MainWindow(cfg)
+    made = {}
+
+    class FakeWorker:
+        def __init__(self, client, text, lang, style, parent=None, messages=None):
+            made.update(client=client, text=text, lang=lang, messages=messages)
+            self.chunk = self.finished_ok = self.failed = _Sig()
+        def start(self):
+            pass
+        def isRunning(self):
+            return False
+
+    class _Sig:
+        def connect(self, *_):
+            pass
+
+    monkeypatch.setattr(mw, "TranslateWorker", FakeWorker)
+    win.email_source.setPlainText("告诉客户发货推迟三天")
+    win._on_email_clicked()
+    assert getattr(made["client"], "is_free", False) is True
+    assert made["messages"] is None                 # 直译，不走改写 prompt
+    assert "免费翻译引擎" in win.email_hint.text()
+    # 直译结果整段进正文、无主题
+    win._run_backtranslation = lambda *_: None
+    win._email_done("草稿", "Tell the customer shipping is delayed by three days.", "email")
+    assert win.email_subject.text() == ""
+    assert win.email_body.toPlainText().startswith("Tell the customer")
+    win.really_quit = True
+    win.close()
+
+
+def test_compose_with_llm_still_uses_rewrite_prompt(qapp, tmp_path, monkeypatch):
+    from ivyea_translate.config import Config
+    from ivyea_translate.ui import main_window as mw
+
+    cfg = Config(tmp_path / "c.json")
+    cfg.set("provider.api_key", "sk-x")
+    cfg.set("provider.base_url", "https://api.example.com/v1")
+    cfg.set("provider.model", "m")
+    win = mw.MainWindow(cfg)
+    made = {}
+
+    class _Sig:
+        def connect(self, *_):
+            pass
+
+    class FakeWorker:
+        def __init__(self, client, text, lang, style, parent=None, messages=None):
+            made.update(messages=messages)
+            self.chunk = self.finished_ok = self.failed = _Sig()
+        def start(self):
+            pass
+        def isRunning(self):
+            return False
+
+    monkeypatch.setattr(mw, "TranslateWorker", FakeWorker)
+    win.email_source.setPlainText("草稿")
+    win._on_email_clicked()
+    assert made["messages"] and made["messages"][0]["role"] == "system"
+    win.really_quit = True
+    win.close()

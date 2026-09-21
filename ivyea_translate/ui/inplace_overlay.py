@@ -399,15 +399,31 @@ class InPlaceOverlay(QWidget):
         self.update()
         QTimer.singleShot(auto_close_ms, self.close)
 
-    def prepare(self, blocks: Sequence) -> None:
-        """OCR 完成：记下每块的位置，等译文逐块回填。"""
+    def prepare(self, blocks: Sequence, recognized: bool = True) -> None:
+        """记下每块的位置，等译文逐块回填。
+
+        流水线下 OCR 先交版面（只有框、recognized=False），文字随后逐块由
+        set_block_source 补上；老调用一次给齐带字的块（recognized=True）。
+        """
         self._blocks = list(blocks)
         self._cards = [None] * len(self._blocks)
         if not self._blocks:
             self.fail("没有识别到文字", 1500)
             return
-        self._toolbar.btn_copy_src.setEnabled(True)  # 原文此刻已到手
-        self.set_status("翻译中…")
+        if recognized:
+            self._toolbar.btn_copy_src.setEnabled(True)  # 原文此刻已到手
+            self.set_status("翻译中…")
+        else:
+            self.set_status("识别中…")
+
+    def set_block_source(self, index: int, block) -> None:
+        """流水线：第 index 块的原文识别完成（带字的块替换占位块）。"""
+        if not (0 <= index < len(self._blocks)):
+            return
+        self._blocks[index] = block
+        if any(b.text.strip() for b in self._blocks):
+            self._toolbar.btn_copy_src.setEnabled(True)
+            self.set_status("翻译中…")
 
     def set_block_text(self, index: int, text: str) -> None:
         """回填第 index 块的译文（逐块到达，翻一块显示一块）。"""

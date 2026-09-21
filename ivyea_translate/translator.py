@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections import OrderedDict
 from typing import Dict, List, Optional, Tuple
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QObject, QThread, Signal
 
 from .llm import LLMClient, LLMError
 
@@ -205,6 +205,100 @@ def build_messages(text: str, target_language: str, style: str) -> List[Dict[str
     ]
 
 
+def cache_key_for(client, target_language: str, style: str, text: str) -> Tuple:
+    """翻译缓存键：引擎身份 + 目标语言 + 风格 + 原文（弹窗/原位/主窗共用）。"""
+    eng = "free" if getattr(client, "is_free", False) else \
+        f"{getattr(client, 'base_url', '')}|{getattr(client, 'model', '')}"
+    return (eng, target_language, style, text)
+
+
+class ParagraphTranslator(QObject):
+    """段落级并发翻译：OCR 每交出一段就 submit 一段，翻完一段发一段。
+
+    截图翻译以前是"整图识完 → 整段一次请求 → 回来才显示"；现在 OCR 流水线逐段
+    交付，这里逐段翻译（并发 3），首段译文在首段识别完后一个往返就能出现，
+    与 OCR 剩余段落的识别重叠。大模型引擎逐段流式（chunk 信号带段号），免费引擎
+    一段一次返回。
+
+    "哪段译文属于哪段原文"由段号保证，不依赖模型守规矩。取消后在飞的请求结果
+    一律丢弃（信号不再发）。
+    """
+
+    chunk = Signal(int, str)     # 段号, 增量（仅大模型流式）
+    done = Signal(int, str)      # 段号, 译文
+    failed = Signal(int, str)    # 段号, 错误
+
+    MAX_WORKERS = 3
+
+    def __init__(self, client: LLMClient, target_language: str, style: str, parent=None):
+        super().__init__(parent)
+        self._client = client
+        self._target = target_language
+        self._style = style
+        self._cancelled = False
+        self._pool = None
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancelled
+
+    def submit(self, idx: int, text: str) -> None:
+        """提交一段（可从任意线程调用）。空段直接回 done("")。"""
+        if self._cancelled:
+            return
+        if not text.strip():
+            self.done.emit(idx, "")
+            return
+        key = cache_key_for(self._client, self._target, self._style, text)
+        cached = cache_get(key)
+        if cached is not None:
+            self.done.emit(idx, cached)
+            return
+        if self._pool is None:
+            from concurrent.futures import ThreadPoolExecutor
+
+            self._pool = ThreadPoolExecutor(
+                max_workers=self.MAX_WORKERS, thread_name_prefix="para-translate")
+        self._pool.submit(self._run_one, idx, text, key)
+
+    def cancel(self) -> None:
+        self._cancelled = True
+        pool, self._pool = self._pool, None
+        if pool is not None:
+            pool.shutdown(wait=False)
+
+    def _run_one(self, idx: int, text: str, key: Tuple) -> None:
+        if self._cancelled:
+            return
+        try:
+            if getattr(self._client, "is_free", False):
+                result = self._client.translate(
+                    text, self._target, should_abort=lambda: self._cancelled)
+            else:
+                parts: List[str] = []
+                for piece in self._client.stream_chat(
+                        build_messages(text, self._target, self._style)):
+                    if self._cancelled:
+                        return
+                    parts.append(piece)
+                    self.chunk.emit(idx, piece)
+                result = "".join(parts)
+        except LLMError as e:
+            if not self._cancelled:
+                self.failed.emit(idx, str(e))
+            return
+        except Exception as e:
+            if not self._cancelled:
+                self.failed.emit(idx, f"{e.__class__.__name__}: {e}")
+            return
+        if self._cancelled:
+            return
+        result = result.strip()
+        if result:
+            cache_put(key, result)
+        self.done.emit(idx, result)
+
+
 class BlockTranslateWorker(QThread):
     """原位翻译专用：逐块翻译，每翻完一块就发一次。
 
@@ -295,9 +389,7 @@ class TranslateWorker(QThread):
             # 仅缓存普通翻译（定制 prompt 如邮件/详解一次性，不缓存）
             key = None
             if self._messages is None:
-                eng = "free" if getattr(self._client, "is_free", False) else \
-                    f"{getattr(self._client, 'base_url', '')}|{getattr(self._client, 'model', '')}"
-                key = (eng, self._target_language, self._style, self._text)
+                key = cache_key_for(self._client, self._target_language, self._style, self._text)
                 cached = cache_get(key)
                 if cached is not None:
                     if self._cancelled:

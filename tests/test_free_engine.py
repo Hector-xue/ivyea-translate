@@ -179,3 +179,110 @@ def test_google_translate_parallel_chunks_keep_order(monkeypatch):
     text = "\n".join(["aaaa" * 150, "bbbb" * 150, "cccc" * 150])
     out = fe._google_translate(text, "zh-CN")
     assert out == "T(aaaa)\nT(bbbb)\nT(cccc)"
+
+
+# ---------- 对冲请求 ----------
+
+def test_hedge_launches_backup_when_primary_is_slow(fake_engines):
+    """首选 1s 才回：0.05s 后补发备选，备选先回就用备选，不等首选。"""
+    import time as _t
+    calls, make, install = fake_engines
+
+    def slow(text, target):
+        calls.append("slow")
+        _t.sleep(1.0)
+        return "慢"
+
+    install([("slow", slow), make("fast", result="快")])
+    eng = FreeEngine()
+    t0 = _t.monotonic()
+    assert eng.translate("hi", "zh-CN", stagger_s=0.05) == "快"
+    assert _t.monotonic() - t0 < 0.8          # 没等慢端点
+    assert eng.preferred == "fast"
+
+
+def test_hedge_does_not_launch_backup_when_primary_is_fast(fake_engines):
+    calls, make, install = fake_engines
+    install([make("a", result="好"), make("b", result="也好")])
+    eng = FreeEngine()
+    assert eng.translate("hi", "zh-CN", stagger_s=0.5) == "好"
+    assert calls == ["a"]                     # 备选没被浪费
+
+
+def test_deepl_is_never_used_as_hedge(fake_engines, monkeypatch):
+    """首选慢时，排在后面的 deepl 不能被拿来对冲（限流凶），要等首选有结果。"""
+    import time as _t
+    calls, make, install = fake_engines
+
+    def slow(text, target):
+        calls.append("slow")
+        _t.sleep(0.3)
+        return "慢"
+
+    install([("slow", slow), make("deepl", result="D")])
+    eng = FreeEngine()
+    assert eng.translate("hi", "zh-CN", stagger_s=0.05) == "慢"
+    assert calls == ["slow"]
+
+
+def test_deepl_still_used_when_everything_else_failed(fake_engines):
+    calls, make, install = fake_engines
+    install([make("a", error=LLMError("x")), make("deepl", result="D")])
+    eng = FreeEngine()
+    assert eng.translate("hi", "zh-CN", stagger_s=0.05) == "D"
+    assert calls == ["a", "deepl"]
+
+
+def test_transmart_parses_lines_and_rejects_mismatch(monkeypatch):
+    from ivyea_translate import free_engine as fe
+
+    class FakeResp:
+        def __init__(self, payload):
+            self._p = payload
+        def raise_for_status(self):
+            pass
+        def json(self):
+            return self._p
+
+    sent = {}
+
+    class FakeClient:
+        def post(self, url, json=None, headers=None):
+            sent["body"] = json
+            return FakeResp({"header": {"ret_code": "succ"},
+                             "auto_translation": ["你好", "", "世界"]})
+
+    monkeypatch.setattr(fe, "_shared_client", lambda: FakeClient())
+    assert fe._transmart_translate("Hello\n\nWorld", "zh-CN") == "你好\n\n世界"
+    assert sent["body"]["source"]["text_list"] == ["Hello", "", "World"]
+    assert sent["body"]["source"]["lang"] == "auto"
+    assert sent["body"]["target"]["lang"] == "zh"
+
+    class BadClient(FakeClient):
+        def post(self, url, json=None, headers=None):
+            return FakeResp({"header": {"ret_code": "succ"}, "auto_translation": ["只有一段"]})
+
+    monkeypatch.setattr(fe, "_shared_client", lambda: BadClient())
+    with pytest.raises(LLMError, match="段数"):
+        fe._transmart_translate("Hello\nWorld", "zh-CN")
+
+
+def test_transmart_refuses_traditional_chinese():
+    from ivyea_translate import free_engine as fe
+
+    with pytest.raises(LLMError, match="不支持"):
+        fe._transmart_translate("hi", "zh-TW")
+
+
+def test_prewarm_is_throttled(monkeypatch):
+    from ivyea_translate import free_engine as fe
+
+    started = []
+    monkeypatch.setattr(fe.threading, "Thread",
+                        lambda target, daemon: type("T", (), {"start": lambda self: started.append(1)})())
+    monkeypatch.setattr(fe, "_last_prewarm", 0.0)
+    fe.prewarm_async()
+    fe.prewarm_async()          # 20 秒内第二次：忽略
+    assert len(started) == 1
+    fe.prewarm_async(force=True)
+    assert len(started) == 2

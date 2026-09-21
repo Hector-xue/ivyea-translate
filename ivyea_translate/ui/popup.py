@@ -10,7 +10,7 @@ set_original 回填原文并开始翻译，消除等待黑箱感。
 from __future__ import annotations
 
 import logging
-from typing import Optional, Tuple
+from typing import Optional, Sequence, Tuple
 
 log = logging.getLogger(__name__)
 
@@ -118,6 +118,7 @@ class TranslationPopup(QWidget):
         self._popup_width = width
         self._pending_result: list = []
         self._pending_explain: list = []
+        self._para_parts: Optional[list] = None   # 段落级渲染（截图流水线）待刷新的整篇
         self._flush_timer = QTimer(self)
         self._flush_timer.setSingleShot(True)
         self._flush_timer.timeout.connect(self._on_flush_timeout)
@@ -358,6 +359,7 @@ class TranslationPopup(QWidget):
         self._flush_timer.start(FLUSH_MS)
 
     def _on_flush_timeout(self) -> None:
+        self._flush_paragraphs()
         self._flush_pending(self.result_view, "_pending_result")
         self._flush_pending(self._explain_view, "_pending_explain")
         # 计数跟着这一次合并刷新走，不去连 textChanged：那条路每来一个 SSE 片段
@@ -373,11 +375,40 @@ class TranslationPopup(QWidget):
         self._pending_result.append(piece)
         self._schedule_flush()
 
+    # ---- 段落级渲染（截图翻译流水线：OCR 逐段交出、译文逐段到达） ----
+
+    PENDING_MARK = "…"
+
+    @staticmethod
+    def render_paragraphs(parts: Sequence[Optional[str]]) -> str:
+        """纯函数：段落列表 -> 整篇文本。未到的段落用省略号占位，已到的原样；
+        占位保证后到的段落不会把先到的往下挤，阅读位置稳定。"""
+        return "\n\n".join(TranslationPopup.PENDING_MARK if p is None else p for p in parts)
+
+    def set_result_paragraphs(self, parts: Sequence[Optional[str]]) -> None:
+        """用段落列表整体刷新译文区（合并到 60ms 一次的刷新节拍，不逐字重排）。"""
+        self._para_parts = list(parts)
+        self._schedule_flush()
+
+    def _flush_paragraphs(self) -> None:
+        parts, self._para_parts = self._para_parts, None
+        if parts is None:
+            return
+        text = self.render_paragraphs(parts)
+        self._result_parts = [text]
+        # 段落级更新保留滚动位置：用户在读上面的段落，下面到一段不该把视图拽走
+        sb = self.result_view.verticalScrollBar()
+        pos = sb.value()
+        self.result_view.setPlainText(text)
+        sb.setValue(min(pos, sb.maximum()))
+        self._relayout()
+
     def set_done(self, full_text: str) -> None:
         # 先落定文本再改状态：两者同帧完成，不会出现"译文出完了还写着翻译中"
         log.info("弹窗译文落定（%d 字）", len(full_text))
         self._flush_timer.stop()
         self._pending_result = []
+        self._para_parts = None
         self.result_view.setPlainText(full_text)
         self._result_parts = [full_text]
         self._status_base = "已翻译"

@@ -3,13 +3,12 @@ from __future__ import annotations
 
 import logging
 import sys
-import threading
 import time
 from typing import List, Optional
 
 log = logging.getLogger(__name__)
 
-from PySide6.QtCore import QLockFile, QObject, QRect, Qt, Signal
+from PySide6.QtCore import QLockFile, QRect, Qt
 from PySide6.QtGui import QAction, QColor, QCursor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
@@ -18,6 +17,7 @@ from .config import CONFIG_DIR, Config
 from .hotkeys import HotkeyManager
 from .llm import LLMError
 from .ocr import ocr_engine
+from .screenshot_flow import ScreenshotSession
 from .translator import TranslateWorker
 from .ui import theme
 from .ui.capture_overlay import CaptureOverlay
@@ -48,52 +48,6 @@ def _make_icon() -> QIcon:
     return QIcon(pm)
 
 
-class _Bridge(QObject):
-    """后台线程 -> 主线程的信号桥（截图 OCR 用）。"""
-
-    ocr_ready = Signal(str, QRect)      # 识别文本, 锚区域（弹窗模式）
-    ocr_failed = Signal(str, QRect)
-    blocks_ready = Signal(list, QRect)  # 带包围框的段落列表（原位模式）
-    blocks_failed = Signal(str, QRect)
-
-
-class OcrThread(threading.Thread):
-    """后台识别。mode="popup" 只要文本；mode="inplace" 还要每段的包围框。
-
-    收 QImage 不收文件路径：截图内存直通 OCR，省掉 PNG 编码落盘再读回解码
-    的 50-200ms（QImage 可安全跨线程，QPixmap 不行——转换必须在主线程做完）。
-    """
-
-    def __init__(self, bridge: _Bridge, image, anchor: QRect,
-                 mode: str = "popup"):
-        super().__init__(daemon=True)
-        self._bridge = bridge
-        self._image = image
-        self._anchor = anchor
-        self._mode = mode
-
-    def run(self):
-        from .ocr import qimage_to_rgb
-
-        inplace = self._mode == "inplace"
-        try:
-            blocks = ocr_engine.recognize_blocks_array(qimage_to_rgb(self._image))
-            if inplace:
-                if blocks:
-                    self._bridge.blocks_ready.emit(list(blocks), self._anchor)
-                else:
-                    self._bridge.blocks_failed.emit("没有识别到文字", self._anchor)
-                return
-            text = "\n\n".join(b.text for b in blocks)
-            if text.strip():
-                self._bridge.ocr_ready.emit(text, self._anchor)
-            else:
-                self._bridge.ocr_failed.emit("没有识别到文字", self._anchor)
-        except Exception as e:
-            sig = self._bridge.blocks_failed if inplace else self._bridge.ocr_failed
-            sig.emit(str(e), self._anchor)
-
-
 class TranslateApp(QApplication):
     def __init__(self, argv: List[str]):
         super().__init__(argv)
@@ -108,12 +62,6 @@ class TranslateApp(QApplication):
         # 恢复上次命中的免费翻译端点，避免本次首译又从 DeepL 慢重试
         from .free_engine import free_engine
         free_engine.preferred = self.cfg.get("free_engine.preferred") or None
-
-        self.bridge = _Bridge()
-        self.bridge.ocr_ready.connect(self._on_ocr_ready)
-        self.bridge.ocr_failed.connect(self._on_ocr_failed)
-        self.bridge.blocks_ready.connect(self._on_blocks_ready)
-        self.bridge.blocks_failed.connect(self._on_blocks_failed)
 
         # 划词翻译触发：Ctrl+C+C（文本已在剪贴板，零注入最可靠）
         self.watcher = ClipboardWatcher(max_chars=int(self.cfg.get("double_copy.max_chars", 3000)))
@@ -142,7 +90,7 @@ class TranslateApp(QApplication):
         self._overlay: Optional[CaptureOverlay] = None
         self._capture_mode = "popup"
         self._inplace: Optional[object] = None
-        self._ocr_threads: List[OcrThread] = []
+        self._sessions: List[ScreenshotSession] = []   # 进行中的截图翻译流水线
 
         # 退出前必须收干净后台翻译线程：QThread 对象被 Python 回收时若线程还在跑，
         # Qt 会直接 abort（"QThread: Destroyed while thread is still running"）。
@@ -396,6 +344,9 @@ class TranslateApp(QApplication):
         if self._overlay is not None:
             return
         self._capture_mode = mode
+        # 用户还在框选，先把翻译端点的连接热起来：服务端几分钟就掐空闲连接，
+        # 不预热的话每次截图都要先付一次 TLS 握手（本机实测 850ms vs 热连接 52ms）
+        self._prewarm_engines()
         self._overlay = CaptureOverlay()
         self._overlay.region_selected.connect(self._on_region_selected)
         self._overlay.cancelled.connect(self._clear_overlay)
@@ -404,43 +355,38 @@ class TranslateApp(QApplication):
     def _clear_overlay(self) -> None:
         self._overlay = None
 
-    def _start_ocr(self, image, rect: QRect, mode: str) -> None:
-        thread = OcrThread(self.bridge, image, rect, mode)
-        self._ocr_threads = [t for t in self._ocr_threads if t.is_alive()]
-        self._ocr_threads.append(thread)
-        thread.start()
-
     def _on_region_selected(self, rect: QRect, pixmap: QPixmap) -> None:
+        self._clear_overlay()
         if self._capture_mode == "inplace":
-            self._clear_overlay()
             self._start_inplace(rect, pixmap)
             return
-        self._clear_overlay()
-        # 弹窗立即出现（"识别中"状态），OCR 在后台跑完再回填——消除框选后的静默等待
+        # 弹窗立即出现（"识别中"状态），版面/原文/译文随流水线逐段回填
         popup = TranslationPopup(original="", show_original=True,
                                  width=int(self.cfg.get("ui.popup_width", 520)),
                                  show_explain=self._explain_available())
-        popup.set_status("正在识别文字…")
         self._track_popup(popup)
         popup.show_near(rect)
-        self._shot_popup = popup
-        popup.destroyed.connect(lambda: setattr(self, "_shot_popup", None))
-        self._start_ocr(pixmap.toImage(), rect, "popup")
+        session = self._new_session("popup", popup)
+        popup.destroyed.connect(session.close)
+        session.start(pixmap.toImage())
 
-    def _on_ocr_ready(self, text: str, anchor: QRect) -> None:
-        popup = getattr(self, "_shot_popup", None)
-        if popup is None:  # 用户已把"识别中"弹窗关了，不再打扰
-            return
-        popup.set_original(text)
-        popup.set_status("翻译中…")
-        # 截图翻译可独立设定目标语言（空 = 跟随全局）
-        self._start_translate(popup, text, self.cfg.get("screenshot.target_language", ""))
+    def _new_session(self, mode: str, view) -> ScreenshotSession:
+        from .free_engine import resolve_engine
 
-    def _on_ocr_failed(self, message: str, anchor: QRect) -> None:
-        popup = getattr(self, "_shot_popup", None)
-        if popup is None:
-            return
-        popup.set_failed(f"识别失败：{message}")
+        session = ScreenshotSession(
+            mode, view,
+            client_factory=lambda: resolve_engine(self.cfg),
+            target_for=lambda text: self._resolve_target(
+                text, self.cfg.get("screenshot.target_language", "")),
+            style=self.cfg.get("translate.style", "general"),
+            parent=self,
+        )
+        session.finished.connect(
+            lambda source, result, target: self.window.add_history(
+                source, result, target, self.cfg.get("translate.style", "general")))
+        self._sessions = [s for s in self._sessions if not s.closed]
+        self._sessions.append(session)
+        return session
 
     # ---------- 原位截图翻译 ----------
 
@@ -460,56 +406,9 @@ class TranslateApp(QApplication):
         overlay.popup_requested.connect(self._on_inplace_popup)
         self._inplace = overlay
         overlay.start()
-        self._start_ocr(pixmap.toImage(), rect, "inplace")
-
-    def _on_blocks_ready(self, blocks: list, anchor: QRect) -> None:
-        from .free_engine import resolve_engine
-        from .ocr import merge_near_blocks
-        from .translator import BlockTranslateWorker
-
-        overlay = self._inplace
-        if overlay is None:  # 用户已按 Esc 关掉，不再打扰
-            return
-        # OCR 的分段偏碎（行距一超过 0.8 倍行高就断），贴回去会是一堆小卡片；
-        # 原位模式按更宽松的间距合并，视觉上更接近"原文那一段"
-        blocks = merge_near_blocks(blocks, gap_factor=1.8)
-        overlay.prepare(blocks)
-        texts = [b.text for b in blocks]
-        source = "\n\n".join(texts)
-        try:
-            client = resolve_engine(self.cfg)
-        except LLMError as e:
-            overlay.fail(str(e), 3000)
-            return
-        target = self._resolve_target(source, self.cfg.get("screenshot.target_language", ""))
-        worker = BlockTranslateWorker(
-            client, texts, target, self.cfg.get("translate.style", "general"),
-        )
-        self._workers.append(worker)
-        results: dict = {}
-
-        def block_done(idx: int, text: str) -> None:
-            if self._inplace is not overlay:
-                return
-            results[idx] = text
-            overlay.set_block_text(idx, text)
-
-        def all_done() -> None:
-            if self._inplace is not overlay or not results:
-                return
-            overlay.finish()
-            full = "\n\n".join(results[i] for i in sorted(results))
-            self.window.add_history(source, full, target,
-                                    self.cfg.get("translate.style", "general"))
-
-        worker.block_done.connect(block_done)
-        worker.block_failed.connect(
-            lambda idx, msg: overlay.fail(f"翻译失败：{msg}", 3000))
-        worker.finished_all.connect(all_done)
-        worker.finished.connect(
-            lambda w=worker: self._workers.remove(w) if w in self._workers else None)
-        overlay.closed.connect(worker.cancel)
-        worker.start()
+        session = self._new_session("inplace", overlay)
+        overlay.closed.connect(session.close)
+        session.start(pixmap.toImage())
 
     def _on_inplace_popup(self, source: str, result: str, rect: QRect) -> None:
         """原位工具条点"弹窗"：已完成的原文/译文转成对照弹窗（不重新翻译）。"""
@@ -521,10 +420,6 @@ class TranslateApp(QApplication):
         self._track_popup(popup)
         popup.set_done(result)
         popup.show_near(rect)
-
-    def _on_blocks_failed(self, message: str, anchor: QRect) -> None:
-        if self._inplace is not None:
-            self._inplace.fail(f"识别失败：{message}", 2500)
 
     def _close_inplace(self) -> None:
         overlay = self._inplace
@@ -668,11 +563,13 @@ class TranslateApp(QApplication):
         就完，给个小预算等一等，超时就不管了——最坏也不比现在差。
         """
         deadline = time.monotonic() + budget_s
-        for t in list(self._ocr_threads):
-            if not t.is_alive():
-                continue
-            t.join(max(0.0, deadline - time.monotonic()))
-        self._ocr_threads = [t for t in self._ocr_threads if t.is_alive()]
+        for session in list(self._sessions):
+            session.close()   # 让识别线程在下一个段落边界退出
+            t = session.thread
+            if t is not None and t.is_alive():
+                t.join(max(0.0, deadline - time.monotonic()))
+        self._sessions = [s for s in self._sessions
+                          if s.thread is not None and s.thread.is_alive()]
 
     def request_quit(self) -> None:
         """唯一正确的退出入口：先放行主窗口的 close，再 quit。"""

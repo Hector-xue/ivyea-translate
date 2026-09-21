@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 
 from .. import config as cfgmod
 from ..config import Config, LANGUAGES, PROVIDER_PRESETS, STYLES
-from ..llm import LLMError, client_from_config
+from ..llm import LLMError
 from ..translator import TranslateWorker
 from . import theme
 from .backdrop import Backdrop
@@ -809,14 +809,15 @@ class MainWindow(ShellWindowMixin, QMainWindow):
             return
         if getattr(self, "_email_worker", None) is not None and self._email_worker.isRunning():
             self._email_worker.cancel()
-        # 写作助手需要大模型的改写能力，免费翻译引擎无法胜任
+        from ..free_engine import resolve_engine
+
+        # 引擎跟随全局设置：选了免费引擎（或没配大模型）就走免费引擎直译，
+        # 不再弹"请配置大模型"把整个页签锁死——改写/语气是大模型才有的能力，
+        # 免费引擎下降级为直译并明说，功能本身不能不可用
         try:
-            client = client_from_config(self.cfg)
-        except LLMError:
-            self.email_body.setPlainText(
-                "写作助手需要配置大模型：请到「设置 → 翻译模型」填写 API Key。\n"
-                "（免费翻译引擎只做直译，不支持改写与润色。）"
-            )
+            client = resolve_engine(self.cfg)
+        except LLMError as e:
+            self.email_body.setPlainText(str(e))
             return
         scen = self.email_scenario_combo.currentData()
         lang = self.email_lang_combo.currentData()
@@ -828,10 +829,18 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         self._reset_email_results()
         self.email_btn.setEnabled(False)
         self.email_btn.setText("生成中…")
-        self._email_worker = TranslateWorker(
-            client, text, lang, "general", parent=self,
-            messages=build_compose_messages(text, lang, scen, tone),
-        )
+        free = bool(getattr(client, "is_free", False))
+        self._email_free_mode = free
+        if free:
+            self.email_hint.setText(
+                "当前为免费翻译引擎：只做直译，不改写、不调语气；"
+                "要母语级改写请到「设置 → 翻译模型」配置大模型")
+            self._email_worker = TranslateWorker(client, text, lang, "general", parent=self)
+        else:
+            self._email_worker = TranslateWorker(
+                client, text, lang, "general", parent=self,
+                messages=build_compose_messages(text, lang, scen, tone),
+            )
         self._email_worker.chunk.connect(self._append_email_chunk)
         self._email_worker.finished_ok.connect(lambda full, s=text, sc=scen: self._email_done(s, full, sc))
         self._email_worker.failed.connect(self._email_failed)
@@ -844,7 +853,10 @@ class MainWindow(ShellWindowMixin, QMainWindow):
     def _email_done(self, source: str, full: str, scenario: str) -> None:
         from ..translator import parse_compose_output
 
-        subject, body = parse_compose_output(full, scenario)
+        if getattr(self, "_email_free_mode", False):
+            subject, body = "", full.strip()   # 直译没有主题行
+        else:
+            subject, body = parse_compose_output(full, scenario)
         self.email_subject.setText(subject)
         self.email_body.setPlainText(body)
         self.email_btn.setEnabled(True)
@@ -859,8 +871,10 @@ class MainWindow(ShellWindowMixin, QMainWindow):
                 self._run_backtranslation(combined)
 
     def _run_backtranslation(self, body: str) -> None:
+        from ..free_engine import resolve_engine
+
         try:
-            client = client_from_config(self.cfg)
+            client = resolve_engine(self.cfg)   # 回译是纯翻译，免费引擎同样能做
         except LLMError:
             return
         primary = self.cfg.get("translate.primary_language", "zh-CN")
