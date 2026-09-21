@@ -275,6 +275,10 @@ class OcrEngine:
         不预热的话用户第一次截图要多等 2-4 秒。"""
 
         def warm():
+            if self.backend in ("auto", "windows"):
+                from . import ocr_windows
+
+                ocr_windows.available(self.prefer_lang)   # 建引擎 ~100ms，别留到第一次截图
             engine = self._ensure_loaded()
             if engine is None:
                 return
@@ -320,12 +324,62 @@ class OcrEngine:
 
     # ---- 流水线：先检测版面，逐段识别、逐段回调 ----
 
+    #: 引擎选择：auto（系统 OCR 优先、失败回退 RapidOCR）/ windows / rapid
+    backend: str = "auto"
+    prefer_lang: str = ""
+
     def recognize_streaming(self, arr, on_layout: Callable[[List[OcrBlock]], None],
                             on_block: Callable[[int, OcrBlock], None],
                             near_gap: Optional[float] = None,
                             should_abort: Optional[Callable[[], bool]] = None,
                             trace=None) -> int:
-        """检测一次、按段识别、每识完一段回调一次。返回段落总数。
+        """按 backend 选引擎：系统 OCR 一步出全部行（几百毫秒），失败回退 RapidOCR 流水线。"""
+        if self.backend in ("auto", "windows"):
+            from . import ocr_windows
+
+            if ocr_windows.available(self.prefer_lang):
+                try:
+                    return self._recognize_windows(arr, on_layout, on_block, near_gap, trace)
+                except Exception as e:
+                    log.warning("系统 OCR 失败，回退 RapidOCR：%s", e)
+            elif self.backend == "windows":
+                raise RuntimeError(ocr_windows.error_reason() or "系统 OCR 不可用")
+        return self._recognize_rapid_streaming(arr, on_layout, on_block, near_gap, should_abort, trace)
+
+    def _recognize_windows(self, arr, on_layout, on_block, near_gap, trace) -> int:
+        """系统 OCR：整图一次出行框+文字，再按同一套几何规则分段、逐段交出。"""
+        from PIL import Image
+
+        from . import ocr_windows
+
+        img = Image.fromarray(arr)
+        scale = compute_upscale(*img.size)   # 小字同样受益于放大，系统 OCR 够快不心疼
+        if scale > 1:
+            img = img.resize((img.width * scale, img.height * scale), Image.BICUBIC)
+        import numpy as np
+
+        t0 = time.monotonic()
+        lines = ocr_windows.recognize_lines(np.array(img), self.prefer_lang)
+        if trace is not None:
+            trace.mark("检测")
+        log.info("系统 OCR：%d 行，放大×%d，耗时 %.2fs", len(lines), scale, time.monotonic() - t0)
+        plan = plan_paragraphs(lines, near_gap)
+        blocks = [_assemble_paragraph([[lines[i] for i in sub] for sub in para]) for para in plan]
+        blocks = scale_blocks(blocks, scale)
+        on_layout([OcrBlock(text="", x=b.x, y=b.y, w=b.w, h=b.h, line_h=b.line_h, lines=b.lines)
+                   for b in blocks])
+        for idx, block in enumerate(blocks):
+            if trace is not None:
+                trace.mark("首段识别")
+            on_block(idx, block)
+        return len(blocks)
+
+    def _recognize_rapid_streaming(self, arr, on_layout: Callable[[List[OcrBlock]], None],
+                                   on_block: Callable[[int, OcrBlock], None],
+                                   near_gap: Optional[float] = None,
+                                   should_abort: Optional[Callable[[], bool]] = None,
+                                   trace=None) -> int:
+        """RapidOCR 流水线：检测一次、按段识别、每识完一段回调一次。返回段落总数。
 
         整图识别是"检测 + 全部行识别"串行完才出第一个字；识别占 OCR 总时间六成
         以上（本机实测 7 行 1.6s 里识别 1.0s），而翻译又要等它。改成检测完先把

@@ -98,6 +98,7 @@ class TranslateApp(QApplication):
         self.aboutToQuit.connect(self._shutdown_workers)
 
         self._setup_tray()
+        self._apply_ocr_settings()
         ocr_engine.warmup_async()
         self._prewarm_engines()
         self._sync_local_model()
@@ -172,9 +173,16 @@ class TranslateApp(QApplication):
         except Exception as e:
             log.warning("本地模型服务处理失败：%s", e)
 
+    def _apply_ocr_settings(self) -> None:
+        ocr_engine.backend = self.cfg.get("ocr.engine", "auto")
+        # 系统 OCR 按"主语言"挑识别包：截图里多半是外语，但 auto 方向下先按主语言建
+        # 引擎最稳（中文包能识中英混排）
+        ocr_engine.prefer_lang = self.cfg.get("translate.primary_language", "zh-CN")
+
     def _on_settings_saved(self) -> None:
         self._register_hotkeys()
         self._sync_local_model()
+        self._apply_ocr_settings()
         self.watcher.max_chars = int(self.cfg.get("double_copy.max_chars", 3000))
         self.watcher.double_copy_enabled = bool(self.cfg.get("double_copy.enabled", True))
         # 接口地址可能变了：作废旧连接池，对新端点重建并预热

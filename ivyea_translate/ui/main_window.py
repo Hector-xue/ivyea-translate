@@ -1148,6 +1148,15 @@ class MainWindow(ShellWindowMixin, QMainWindow):
             self.shot_lang_combo.addItem(label, code)
         self._select_combo_data(self.shot_lang_combo, self.cfg.get("screenshot.target_language", ""))
         hk_form.addRow(_row_label("截图翻译目标语言"), self.shot_lang_combo)
+        self.ocr_engine_combo = QComboBox()
+        self.ocr_engine_combo.addItem("自动（系统 OCR 优先，快；不可用时用 RapidOCR）", "auto")
+        self.ocr_engine_combo.addItem("Windows 系统 OCR（几百毫秒出结果）", "windows")
+        self.ocr_engine_combo.addItem("RapidOCR（本地模型，小字更准，慢）", "rapid")
+        self._select_combo_data(self.ocr_engine_combo, self.cfg.get("ocr.engine", "auto"))
+        hk_form.addRow(_row_label("文字识别引擎"), _with_hint(
+            self.ocr_engine_combo,
+            "系统 OCR 是 Windows 自带的（微信截图识别同一量级的速度），零下载；"
+            "识别小字或复杂排版不理想时切 RapidOCR。macOS/Linux 只有 RapidOCR。"))
         self.hotkey_status = QLabel("")
         self.hotkey_status.setObjectName("Hint")
         self.hotkey_status.setWordWrap(True)
@@ -1645,6 +1654,7 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         self.cfg.set("hotkeys.screenshot_inplace", self.hk_inplace_edit.text().strip())
         self.cfg.set("double_copy.enabled", self.dblcopy_check.isChecked())
         self.cfg.set("screenshot.target_language", self.shot_lang_combo.currentData())
+        self.cfg.set("ocr.engine", self.ocr_engine_combo.currentData())
         self.cfg.set("translate.primary_language", self.primary_lang_combo.currentData())
         self.cfg.set("translate.secondary_language", self.secondary_lang_combo.currentData())
         self.cfg.save()

@@ -114,6 +114,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # 截图翻译目标语言；空 = 跟随全局 translate.target_language
         "target_language": "",
     },
+    "ocr": {
+        # 识别引擎：auto = Windows 系统 OCR 优先（快、零下载）、失败回退 RapidOCR；
+        # windows = 只用系统 OCR；rapid = 只用 RapidOCR（小字/复杂排版更准）
+        "engine": "auto",
+    },
     "ui": {
         "popup_width": 520,
         "history_limit": 100,
