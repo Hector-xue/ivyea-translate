@@ -388,3 +388,38 @@ def test_exit_reason_quotes_last_error_line(local_dir):
         "0.00.124.913 E srv  llama_server: exiting due to model loading error\n", encoding="utf-8")
     srv = lm.LocalServer()
     assert "exiting due to model loading error" in srv._exit_reason()
+
+
+def test_summarize_backend_and_speed_from_real_log_shapes():
+    no_gpu = "warning: no usable GPU found, --gpu-layers option will be ignored\n0.00 I srv model loaded\n"
+    assert lm.summarize_backend(no_gpu).startswith("CPU")
+    timing = ("0.12 I slot print_timing: id  2 | task 0 | prompt eval time =    2402.35 ms /    30 tokens (   80.08 ms per token,    12.49 tokens per second)\n"
+              "0.12 I slot print_timing: id  2 | task 0 |        eval time =     333.08 ms /     5 tokens (   83.27 ms per token,    12.01 tokens per second)\n")
+    assert lm.summarize_speed(timing) == "生成 12 tok/s"
+    assert lm.summarize_speed("nothing") == ""
+
+
+def test_server_threads_use_half_logical_cores(tmp_path, monkeypatch):
+    monkeypatch.setattr(lm.os, "cpu_count", lambda: 12)
+    calls = {}
+
+    class FakePopen:
+        pid = 1
+        def __init__(self, args, **kw):
+            calls["args"] = args
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(lm.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(lm.threading, "Thread", lambda *a, **k: type("T", (), {"start": lambda s: None})())
+    monkeypatch.setattr(lm, "LOCAL_DIR", tmp_path)
+    monkeypatch.setattr(lm, "SERVER_LOG", tmp_path / "s.log")
+    rt = tmp_path / "runtime" / lm.LLAMA_BUILD
+    rt.mkdir(parents=True)
+    (rt / ("llama-server.exe" if lm._WINDOWS else "llama-server")).write_bytes(b"x")
+    m = lm.model_path("hy-mt2-1.8b-q4"); m.parent.mkdir(parents=True)
+    with open(m, "wb") as f:
+        f.truncate(lm.MODELS["hy-mt2-1.8b-q4"]["size"])
+    srv = lm.LocalServer()
+    srv.start("hy-mt2-1.8b-q4")
+    assert calls["args"][calls["args"].index("-t") + 1] == "6"

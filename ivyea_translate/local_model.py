@@ -313,8 +313,28 @@ def server_args(binary: Path, model: Path, port: int, threads: int) -> List[str]
     ]
 
 
+def summarize_speed(log_text: str) -> str:
+    """纯函数：最近一次请求的生成速度（llama-server 的 print_timing 行）。"""
+    last = ""
+    for line in log_text.splitlines():
+        if "print_timing" in line and "eval time" in line and "prompt eval" not in line:
+            last = line
+    if not last:
+        return ""
+    try:
+        tps = last.rsplit(",", 1)[1].split("tokens per second")[0].strip()
+        return f"生成 {float(tps):.0f} tok/s"
+    except (IndexError, ValueError):
+        return ""
+
+
 def summarize_backend(log_text: str) -> str:
-    """纯函数：从 llama-server 日志里读出跑在什么设备上，给状态栏显示。"""
+    """纯函数：从 llama-server 日志里读出跑在什么设备上，给状态栏显示。
+
+    无 GPU 时 llama-server 只在开头打一句 "no usable GPU found"，没有 offloaded 行。
+    """
+    if "no usable GPU found" in log_text:
+        return "CPU（未检测到可用 GPU）"
     gpu = ""
     for line in log_text.splitlines():
         low = line.lower()
@@ -381,7 +401,10 @@ class LocalServer:
             self._model_id = model_id
             self._ready.clear()
             self._fail_reason = ""
-            threads = max(1, min(8, (os.cpu_count() or 4) - 1))
+            # 线程数取"逻辑核的一半"≈物理核：这是 llama.cpp 自己的推荐（超线程对
+            # 矩阵乘只添乱），也给同时在跑的 OCR 留出 CPU——用户实测 -t 逻辑核-1 时
+            # 截图流水线里 OCR 被翻译抢得只剩一半速度（10 行识别 3.5s）
+            threads = max(1, min(8, (os.cpu_count() or 4) // 2))
             args = server_args(binary, model_path(model_id), self._port, threads)
             LOCAL_DIR.mkdir(parents=True, exist_ok=True)
             logf = open(SERVER_LOG, "w", encoding="utf-8", errors="replace")
@@ -442,6 +465,12 @@ class LocalServer:
         except OSError:
             return ""
 
+    def speed_summary(self) -> str:
+        try:
+            return summarize_speed(SERVER_LOG.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            return ""
+
     def stop(self) -> None:
         with self._lock:
             self._stop_locked()
@@ -486,7 +515,13 @@ class LocalClient(LLMClient):
     def stream_chat(self, messages):
         local_server.wait_ready()
         self.base_url = local_server.base_url()   # 重启后端口会变
-        yield from super().stream_chat(messages)
+        t0 = time.monotonic()
+        n = 0
+        for piece in super().stream_chat(messages):
+            n += len(piece)
+            yield piece
+        log.info("本地模型一段完成：%d 字 %.1fs（%s，%s）", n, time.monotonic() - t0,
+                 local_server.backend_summary() or "?", local_server.speed_summary() or "速度未知")
 
     def test_connection(self) -> str:
         local_server.wait_ready()
@@ -540,7 +575,11 @@ def installed_summary() -> str:
                     pct = 0
                 parts.append(f"{meta['label'].split(' ·')[0]} 已下载 {pct}%（可续传）")
         return "未安装" + ("；" + "，".join(parts) if parts else "")
-    state = "运行中 · " + (local_server.backend_summary() or "加载中") if local_server.running else "已安装（按需启动）"
+    if local_server.running:
+        parts = [local_server.backend_summary() or "加载中", local_server.speed_summary()]
+        state = "运行中 · " + " · ".join(p for p in parts if p)
+    else:
+        state = "已安装（按需启动）"
     return f"{MODELS[mid]['label'].split('（')[0]} · {state}"
 
 

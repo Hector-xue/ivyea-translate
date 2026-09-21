@@ -1541,11 +1541,13 @@ class MainWindow(ShellWindowMixin, QMainWindow):
     def _on_local_installed(self, model_id: str, backend: str) -> None:
         self.local_progress.setVisible(False)
         self.local_progress_label.setStyleSheet(f"color: {theme.OK};")
-        self.local_progress_label.setText(f"已启用本地模型（{backend or '运行中'}）")
+        # 不再自动把引擎切成"本地模型"：CPU 上它比在线引擎慢，v0.35.0 装完就切导致
+        # 用户体感"变慢了"。默认留在原引擎——「自动」档断网时它自然兜底；要始终用它
+        # 的人自己在引擎里选
+        self.local_progress_label.setText(
+            f"已安装（{backend or '运行中'}）。当前引擎不变：「自动」档断网时自动用它；"
+            "要始终使用请把上方引擎改为「本地模型」并保存")
         self.local_install_btn.setEnabled(True)
-        # 下载完就是要用它：引擎切到本地并保存，其余设置保持用户当前所填
-        self._select_combo_data(self.engine_combo, "local")
-        self._on_save_settings()
         self._sync_local_buttons()
 
     def _on_local_failed(self, message: str) -> None:
