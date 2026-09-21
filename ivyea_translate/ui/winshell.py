@@ -102,3 +102,127 @@ def describe_event(msg: int, wparam: int, lparam: int) -> str:
     if msg == WM_ACTIVATEAPP:
         return f"WM_ACTIVATEAPP active={int(bool(wparam))}"
     return ""
+
+
+# ---------- 原生外壳：无边框但保留系统窗口的全部行为 ----------
+#
+# 用户对照实验（v0.35.3/0.35.4）：勾"使用系统标题栏"后"显示桌面后跟着还原""三键点不动"
+# 全消失，只有无边框分层窗口有这毛病，别的程序都没有。业界成熟做法（VS Code/Chromium/
+# qwindowkit）不是去掉系统边框，而是**保留 WS_CAPTION|WS_THICKFRAME 这些样式，只在
+# WM_NCCALCSIZE 里把非客户区算成 0**：外壳（任务栏、显示桌面、贴边、动画）眼里它就是
+# 一个普通窗口，而屏幕上一个像素的系统边框都没有。同时不再用 WA_TranslucentBackground
+# 的分层窗口（UpdateLayeredWindow）：分层窗口按像素 alpha 命中、内容是整张位图上传，
+# 是"点不动"这类怪事的温床。圆角与投影交给 DWM（Win11 圆角 8px，Win10 直角），
+# 自绘的投影留白在这个模式下收掉。
+
+WM_NCCALCSIZE = 0x0083
+WM_NCHITTEST = 0x0084
+WM_NCACTIVATE = 0x0086
+HTCLIENT = 1
+
+WS_CAPTION = 0x00C00000
+WS_THICKFRAME = 0x00040000
+WS_SYSMENU = 0x00080000
+WS_MINIMIZEBOX = 0x00020000
+WS_MAXIMIZEBOX = 0x00010000
+SWP_FRAMECHANGED = 0x0020
+SWP_NOMOVE = 0x0002
+SWP_NOSIZE = 0x0001
+SWP_NOZORDER = 0x0004
+SWP_NOACTIVATE = 0x0010
+SM_CXSIZEFRAME = 32
+SM_CYSIZEFRAME = 33
+SM_CXPADDEDBORDER = 92
+DWMWA_WINDOW_CORNER_PREFERENCE = 33
+DWMWCP_ROUND = 2
+
+
+def native_chrome_style(style: int) -> int:
+    """纯函数：在现有样式上补齐"普通窗口"该有的位。WS_POPUP 保留不动（Qt 建的）。"""
+    return style | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX
+
+
+def maximized_inset(frame_x: int, frame_y: int, zoomed: bool) -> tuple:
+    """纯函数：WM_NCCALCSIZE 里客户区要往里收多少。
+
+    最大化时 Windows 会把窗口矩形往屏幕外撑出一圈边框宽度（本意是把边框藏到屏幕外），
+    我们把非客户区算成 0 后这圈就变成了被屏幕裁掉的内容——必须按边框宽度收回来。
+    非最大化时 0：客户区 = 整个窗口矩形。
+    """
+    if not zoomed:
+        return (0, 0, 0, 0)
+    return (frame_x, frame_y, frame_x, frame_y)
+
+
+class _MARGINS(ctypes.Structure):
+    _fields_ = [("left", ctypes.c_int), ("right", ctypes.c_int),
+                ("top", ctypes.c_int), ("bottom", ctypes.c_int)]
+
+
+class _RECT(ctypes.Structure):
+    _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+
+def install_native_chrome(hwnd: int) -> bool:
+    """给 Qt 建好的无边框窗口补上系统窗口样式 + DWM 投影/圆角。失败返回 False（保持原样）。"""
+    if not _WINDOWS or not hwnd:
+        return False
+    try:
+        u = ctypes.windll.user32
+        h = ctypes.c_void_p(hwnd)
+        style = u.GetWindowLongW(h, GWL_STYLE) & 0xFFFFFFFF
+        u.SetWindowLongW(h, GWL_STYLE, ctypes.c_int(native_chrome_style(style) & 0xFFFFFFFF).value)
+        # 让 DWM 认为窗口"有边框"：往客户区延伸 1px 边框，投影与 Win11 圆角就会出现，
+        # 而 1px 会被我们自己的内容盖住
+        try:
+            dwm = ctypes.windll.dwmapi
+            dwm.DwmExtendFrameIntoClientArea(h, ctypes.byref(_MARGINS(1, 1, 1, 1)))
+            pref = ctypes.c_int(DWMWCP_ROUND)
+            dwm.DwmSetWindowAttribute(h, DWMWA_WINDOW_CORNER_PREFERENCE,
+                                      ctypes.byref(pref), ctypes.sizeof(pref))
+        except Exception as e:
+            log.info("DWM 投影/圆角设置失败（不影响使用）：%s", e)
+        # SWP_FRAMECHANGED 触发一次 WM_NCCALCSIZE(TRUE)，Qt 会据此把边框留白记成 0
+        u.SetWindowPos(h, None, 0, 0, 0, 0,
+                       SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
+        log_style(hwnd, "原生外壳")
+        return True
+    except Exception as e:
+        log.warning("原生外壳安装失败，保持纯无边框：%s", e)
+        return False
+
+
+def frame_thickness(hwnd: int) -> tuple:
+    """当前 DPI 下系统边框厚度 (x, y)。"""
+    u = ctypes.windll.user32
+    try:
+        dpi = u.GetDpiForWindow(ctypes.c_void_p(hwnd)) or 96
+        fx = u.GetSystemMetricsForDpi(SM_CXSIZEFRAME, dpi) + u.GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi)
+        fy = u.GetSystemMetricsForDpi(SM_CYSIZEFRAME, dpi) + u.GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi)
+    except Exception:
+        fx = u.GetSystemMetrics(SM_CXSIZEFRAME) + u.GetSystemMetrics(SM_CXPADDEDBORDER)
+        fy = u.GetSystemMetrics(SM_CYSIZEFRAME) + u.GetSystemMetrics(SM_CXPADDEDBORDER)
+    return int(fx), int(fy)
+
+
+def handle_nccalcsize(hwnd: int, wparam: int, lparam: int) -> int:
+    """WM_NCCALCSIZE：非客户区 = 0；最大化时按边框厚度把客户区收回屏幕内。返回 0。"""
+    if wparam:
+        u = ctypes.windll.user32
+        zoomed = bool(u.IsZoomed(ctypes.c_void_p(hwnd)))
+        fx, fy = frame_thickness(hwnd) if zoomed else (0, 0)
+        l, t, r, b = maximized_inset(fx, fy, zoomed)
+        rc = _RECT.from_address(lparam)   # NCCALCSIZE_PARAMS.rgrc[0] 就在结构开头
+        rc.left += l
+        rc.top += t
+        rc.right -= r
+        rc.bottom -= b
+    return 0
+
+
+def def_window_proc(hwnd: int, msg: int, wparam: int, lparam: int) -> int:
+    u = ctypes.windll.user32
+    u.DefWindowProcW.restype = ctypes.c_ssize_t
+    u.DefWindowProcW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t]
+    return int(u.DefWindowProcW(hwnd, msg, wparam, lparam))

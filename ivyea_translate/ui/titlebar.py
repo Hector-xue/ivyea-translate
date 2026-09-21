@@ -20,6 +20,12 @@
 
 macOS 不走无边框：红绿灯按钮是 Mac 用户的肌肉记忆，去掉反而更别扭，那边保留原生
 窗口，标题栏只当头部横幅（不画最小化/最大化/关闭）。
+
+Windows（v0.36.0 起）走"原生外壳"：Qt 层仍是 Frameless，但原生窗口保留
+WS_CAPTION|WS_THICKFRAME 等系统样式、在 WM_NCCALCSIZE 里把非客户区算成 0，
+不再用 WA_TranslucentBackground 的分层窗口。用户对照实验证明分层无边框窗在外壳下
+会"显示桌面后跟着还原、按钮点不动"，普通窗口不会。代价：投影/圆角交给 DWM
+（Win11 圆角 8px，Win10 直角），上面那圈自绘投影留白在 Windows 上收掉。
 """
 from __future__ import annotations
 
@@ -38,6 +44,7 @@ TITLEBAR_HEIGHT = 38
 SHADOW_MARGIN = 12   # 窗体四周留给投影的透明留白（同时是抓边缩放带）
 SHADOW_OFFSET = 3    # 投影下沉，模拟光从上方来
 RESIZE_BAND = SHADOW_MARGIN + 4
+NATIVE_RESIZE_BAND = 6   # 原生外壳模式：没有留白，抓边带只留系统边框的宽度
 
 
 def apply_frameless(win, native_frame: bool = False) -> bool:
@@ -59,6 +66,12 @@ def apply_frameless(win, native_frame: bool = False) -> bool:
         win.windowFlags() | Qt.FramelessWindowHint | Qt.WindowSystemMenuHint
         | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint
     )
+    if WINDOWS:
+        # Windows 走"原生外壳"：不做分层透明窗，系统样式 + WM_NCCALCSIZE 去边框，
+        # 圆角投影交给 DWM（见 winshell.install_native_chrome）。用户对照实验证明
+        # 分层无边框窗口在外壳下会"显示桌面后跟着还原、按钮点不动"，普通窗口不会。
+        win._native_chrome = True
+        return True
     win.setAttribute(Qt.WA_TranslucentBackground)
     return True
 
@@ -212,11 +225,14 @@ class ShellWindowMixin:
     """无边框窗口的窗体绘制（圆角投影）与四边缩放。"""
 
     _frameless: bool = False
+    _native_chrome: bool = False   # Windows：投影/圆角由 DWM 画，自绘留白收掉
 
     # ---- 投影 ----
 
     def _shell_margin(self) -> int:
-        return 0 if (not self._frameless or self.isMaximized()) else SHADOW_MARGIN
+        if not self._frameless or self._native_chrome or self.isMaximized():
+            return 0
+        return SHADOW_MARGIN
 
     def paintEvent(self, event):
         margin = self._shell_margin()
@@ -247,15 +263,17 @@ class ShellWindowMixin:
     def _edge_at(self, pos) -> Qt.Edges:
         if not self._frameless or self.isMaximized():
             return Qt.Edges()
+        # 原生外壳没有投影留白，抓边带压在内容边缘上，只留 6px（系统边框的手感）
+        band = NATIVE_RESIZE_BAND if self._native_chrome else RESIZE_BAND
         x, y, w, h = pos.x(), pos.y(), self.width(), self.height()
         edges = Qt.Edges()
-        if x <= RESIZE_BAND:
+        if x <= band:
             edges |= Qt.LeftEdge
-        elif x >= w - RESIZE_BAND:
+        elif x >= w - band:
             edges |= Qt.RightEdge
-        if y <= RESIZE_BAND:
+        if y <= band:
             edges |= Qt.TopEdge
-        elif y >= h - RESIZE_BAND:
+        elif y >= h - band:
             edges |= Qt.BottomEdge
         return edges
 

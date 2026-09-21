@@ -269,6 +269,13 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         self._frameless = apply_frameless(self, native_frame=bool(cfg.get("ui.native_frame", False)))
         if self._frameless:
             self.setMouseTracking(True)  # 贴边时光标变缩放箭头
+        if self._native_chrome:
+            # 先建原生窗口再补系统样式（WS_CAPTION|WS_THICKFRAME）+ DWM 投影圆角；
+            # 之后 WM_NCCALCSIZE 由 nativeEvent 接管，把非客户区算成 0
+            from . import winshell
+
+            if not winshell.install_native_chrome(int(self.winId())):
+                self._native_chrome = False
 
         root = QWidget()
         root.setObjectName("Root")
@@ -1683,6 +1690,15 @@ class MainWindow(ShellWindowMixin, QMainWindow):
                 from . import winshell
 
                 msg, wparam, lparam = winshell.read_msg(message)
+                if self._native_chrome:
+                    hwnd = int(self.winId())
+                    if msg == winshell.WM_NCCALCSIZE:
+                        return True, winshell.handle_nccalcsize(hwnd, wparam, lparam)
+                    if msg == winshell.WM_NCHITTEST:
+                        return True, winshell.HTCLIENT   # 抓边/拖动都由 Qt 侧 startSystem* 发起
+                    if msg == winshell.WM_NCACTIVATE:
+                        # lParam=-1：激活切换时别让系统重画（不存在的）非客户区，避免闪一下边框
+                        return True, winshell.def_window_proc(hwnd, msg, wparam, -1)
                 text = winshell.describe_event(msg, wparam, lparam)
                 if msg == winshell.WM_SIZE:
                     # 拖拽缩放时 RESTORED 每十几毫秒来一次，只记状态变化

@@ -22,3 +22,34 @@ def test_describe_event_filters_noise():
     assert ws.describe_event(ws.WM_SYSCOMMAND, 0xF020 | 0x3, 0) == "WM_SYSCOMMAND SC_MINIMIZE"
     assert ws.describe_event(ws.WM_SYSCOMMAND, 0xF090, 0) == ""      # SC_MOUSEMENU 之类不记
     assert ws.describe_event(0x0200, 0, 0) == ""                       # WM_MOUSEMOVE 不记
+
+
+def test_native_chrome_style_adds_system_bits_keeps_popup():
+    style = ws.native_chrome_style(0x80000000)
+    for bit in (ws.WS_CAPTION, ws.WS_THICKFRAME, ws.WS_SYSMENU, ws.WS_MINIMIZEBOX, ws.WS_MAXIMIZEBOX):
+        assert style & bit == bit
+    assert style & 0x80000000
+
+
+def test_maximized_inset_only_when_zoomed():
+    assert ws.maximized_inset(8, 8, zoomed=False) == (0, 0, 0, 0)
+    assert ws.maximized_inset(8, 8, zoomed=True) == (8, 8, 8, 8)
+
+
+def test_handle_nccalcsize_shrinks_rect_when_zoomed(monkeypatch):
+    import ctypes
+
+    rc = ws._RECT(-8, -8, 1928, 1088)
+    monkeypatch.setattr(ws, "frame_thickness", lambda hwnd: (8, 8))
+
+    class FakeUser32:
+        def IsZoomed(self, h):
+            return 1
+
+    monkeypatch.setattr(ws.ctypes, "windll", type("W", (), {"user32": FakeUser32()})(), raising=False)
+    assert ws.handle_nccalcsize(1, 1, ctypes.addressof(rc)) == 0
+    assert (rc.left, rc.top, rc.right, rc.bottom) == (0, 0, 1920, 1080)
+    # wParam=0 时不动矩形
+    rc2 = ws._RECT(-8, -8, 1928, 1088)
+    assert ws.handle_nccalcsize(1, 0, ctypes.addressof(rc2)) == 0
+    assert (rc2.left, rc2.top) == (-8, -8)
