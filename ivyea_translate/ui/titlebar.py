@@ -40,12 +40,14 @@ SHADOW_OFFSET = 3    # 投影下沉，模拟光从上方来
 RESIZE_BAND = SHADOW_MARGIN + 4
 
 
-def apply_frameless(win) -> bool:
+def apply_frameless(win, native_frame: bool = False) -> bool:
     """把窗口设成无边框 + 透明底（窗体圆角与投影由我们自己画）。
 
-    返回是否生效；macOS 保留原生窗口，返回 False。
+    返回是否生效；macOS 保留原生窗口，返回 False。native_frame=True 时 Windows 也
+    走原生标题栏（用户在外观里勾选；用来绕开/定位无边框分层窗口在 Windows 外壳下
+    的怪行为：显示桌面后自己冒出来、按钮点不动）。
     """
-    if MACOS:
+    if MACOS or native_frame:
         return False
     # 必须显式带上最小化/最大化/系统菜单提示。Qt 的 Windows 插件只在 flags 恰好等于
     # Qt::Window 时才自动补这几项（qwindowswindow.cpp fixTopLevelWindowFlags）；一加

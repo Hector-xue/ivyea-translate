@@ -161,3 +161,18 @@ def test_settings_hints_align_with_field_text(qapp, tmp_path):
         assert fields, "说明标签必须和它解释的控件在同一个容器里"
         field_x = fields[0].mapTo(win, QPoint(0, 0)).x() + theme.FIELD_TEXT_INSET
         assert hint.mapTo(win, QPoint(0, 0)).x() + theme.FIELD_TEXT_INSET == field_x
+
+
+def test_native_frame_option_disables_frameless(qapp, tmp_path):
+    """Windows 勾"使用系统标题栏"：不再无边框/透明，标题栏不画三个按钮（走 macOS 同款路径）。"""
+    from ivyea_translate.config import Config
+    from ivyea_translate.ui.main_window import MainWindow
+
+    cfg = Config(tmp_path / "config.json")
+    cfg.set("ui.native_frame", True)
+    win = MainWindow(cfg)
+    assert win._frameless is False
+    assert not (win.windowFlags() & Qt.FramelessWindowHint)
+    assert win.titlebar.min_btn is None
+    win.really_quit = True
+    win.close()

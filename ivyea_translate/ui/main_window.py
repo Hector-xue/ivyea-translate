@@ -266,7 +266,7 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         self._test_finished.connect(self._show_test_result)
 
         # 无边框 + 透明底：系统白色标题栏去掉，窗体圆角与投影由 ShellWindowMixin 自绘
-        self._frameless = apply_frameless(self)
+        self._frameless = apply_frameless(self, native_frame=bool(cfg.get("ui.native_frame", False)))
         if self._frameless:
             self.setMouseTracking(True)  # 贴边时光标变缩放箭头
 
@@ -1224,6 +1224,14 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         self.banner_check.setChecked(bool(self.cfg.get("ui.theme_banner", True)))
         self.banner_check.toggled.connect(self._on_banner_toggled)
         opts.addWidget(self.banner_check)
+        if sys.platform == "win32":
+            self.native_frame_check = QCheckBox("使用系统标题栏（重启后生效）")
+            self.native_frame_check.setToolTip(
+                "改用 Windows 原生标题栏和边框（少了圆角投影）。"
+                "如果遇到「显示桌面后主窗自己冒出来」或「右上角按钮点不动」，勾上它可以绕开")
+            self.native_frame_check.setChecked(bool(self.cfg.get("ui.native_frame", False)))
+            self.native_frame_check.toggled.connect(self._on_native_frame_toggled)
+            opts.addWidget(self.native_frame_check)
 
         opts.addSpacing(6)
         opacity_label = QLabel("前景透明度")
@@ -1567,6 +1575,11 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         self.local_progress_label.setStyleSheet("")
         self.local_progress_label.setText("已删除本地模型与运行时")
         self._sync_local_buttons()
+
+    def _on_native_frame_toggled(self, on: bool) -> None:
+        self.cfg.set("ui.native_frame", bool(on))
+        self.cfg.save()
+        self.save_status.setText("重启 Ivyea Translate 后生效")
 
     def _on_preset_changed(self) -> None:
         key = self.preset_combo.currentData()

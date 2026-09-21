@@ -423,3 +423,14 @@ def test_server_threads_use_half_logical_cores(tmp_path, monkeypatch):
     srv = lm.LocalServer()
     srv.start("hy-mt2-1.8b-q4")
     assert calls["args"][calls["args"].index("-t") + 1] == "6"
+
+
+def test_kill_stale_server_tolerates_missing_or_garbage_pidfile(local_dir):
+    lm._kill_stale_server()                       # 无 pidfile：不抛
+    local_dir.mkdir(parents=True, exist_ok=True)
+    lm._pid_file().write_text("not-a-pid")
+    lm._kill_stale_server()                       # 垃圾内容：不抛，且清掉
+    assert not lm._pid_file().exists()
+    lm._pid_file().write_text("999999999")        # 不存在的 pid：不抛
+    lm._kill_stale_server()
+    assert not lm._pid_file().exists()

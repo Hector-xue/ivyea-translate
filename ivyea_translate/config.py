@@ -124,6 +124,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "theme_banner": True,     # 标题栏下的主题横幅
         # 前景（卡片）不透明度 0.55~1.0；null = 跟随各主题的默认值
         "card_opacity": None,
+        # Windows 用系统原生标题栏（放弃无边框圆角投影）；绕开外壳对分层弹出窗的怪行为
+        "native_frame": False,
     },
     "update": {
         "auto_check": True,

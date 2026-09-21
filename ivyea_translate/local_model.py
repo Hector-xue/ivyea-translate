@@ -359,6 +359,113 @@ def summarize_backend(log_text: str) -> str:
     return "CPU" if log_text else ""
 
 
+def _pid_file() -> Path:
+    return LOCAL_DIR / "llama-server.pid"
+
+
+def _make_kill_on_close_job():
+    """Windows：创建一个 Job 对象，子进程挂进去；本进程一死（含被 taskkill /F、
+    安装器强杀）内核自动把 llama-server 收掉，不留 1GB 内存的孤儿。非 Windows 返回 None。"""
+    if not _WINDOWS:
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        k32 = ctypes.windll.kernel32
+        job = k32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [(n, ctypes.c_ulonglong) for n in (
+                "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+                "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+
+        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_longlong),
+                        ("PerJobUserTimeLimit", ctypes.c_longlong),
+                        ("LimitFlags", wintypes.DWORD),
+                        ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t),
+                        ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t),
+                        ("PriorityClass", wintypes.DWORD),
+                        ("SchedulingClass", wintypes.DWORD)]
+
+        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                        ("IoInfo", IO_COUNTERS),
+                        ("ProcessMemoryLimit", ctypes.c_size_t),
+                        ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                        ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        JobObjectExtendedLimitInformation = 9
+        if not k32.SetInformationJobObject(job, JobObjectExtendedLimitInformation,
+                                           ctypes.byref(info), ctypes.sizeof(info)):
+            k32.CloseHandle(job)
+            return None
+        return job
+    except Exception as e:
+        log.info("Job 对象创建失败（孤儿保护不可用）：%s", e)
+        return None
+
+
+def _assign_to_job(job, proc: subprocess.Popen) -> None:
+    if job is None or not _WINDOWS:
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.kernel32.AssignProcessToJobObject(job, int(proc._handle))
+    except Exception as e:
+        log.info("子进程挂 Job 失败：%s", e)
+
+
+def _kill_stale_server() -> None:
+    """上次没收干净的 llama-server（被强杀/崩溃时留下）：按 pidfile 里的 pid 清掉。
+    只杀映像名是 llama-server 的进程，pid 被复用给别的程序也不会误伤。"""
+    try:
+        pid = int(_pid_file().read_text().strip())
+    except OSError:
+        return
+    except ValueError:
+        _pid_file().unlink(missing_ok=True)   # 写坏的 pidfile 直接清掉
+        return
+    try:
+        if _WINDOWS:
+            out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                                 capture_output=True, text=True, timeout=10,
+                                 creationflags=subprocess.CREATE_NO_WINDOW).stdout
+            if "llama-server" in out:
+                log.warning("发现上次残留的本地模型服务（pid %d），先清掉", pid)
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True,
+                               timeout=10, creationflags=subprocess.CREATE_NO_WINDOW)
+        else:
+            cmd = Path(f"/proc/{pid}/cmdline")
+            if cmd.exists() and b"llama-server" in cmd.read_bytes():
+                os.kill(pid, 15)
+    except Exception as e:
+        log.info("清理残留服务失败：%s", e)
+    finally:
+        _pid_file().unlink(missing_ok=True)
+
+
+def _health_ok(port: int) -> bool:
+    """/health 轮询走 urllib：httpx 每次请求都打 INFO 日志，加载模型那一两分钟里
+    会把 app.log 刷成一屏 502。"""
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2.0) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
 class LocalServer:
     """llama-server 子进程的生命周期：起、等就绪、给客户端、停。线程安全。"""
 
@@ -369,6 +476,8 @@ class LocalServer:
         self._model_id = ""
         self._ready = threading.Event()
         self._fail_reason = ""
+        self._job = None
+        self._started_at = 0.0
 
     @property
     def running(self) -> bool:
@@ -407,33 +516,41 @@ class LocalServer:
             threads = max(1, min(8, (os.cpu_count() or 4) // 2))
             args = server_args(binary, model_path(model_id), self._port, threads)
             LOCAL_DIR.mkdir(parents=True, exist_ok=True)
+            _kill_stale_server()
             logf = open(SERVER_LOG, "w", encoding="utf-8", errors="replace")
             kwargs = {}
             if _WINDOWS:
                 kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+            if self._job is None:
+                self._job = _make_kill_on_close_job()
             log.info("启动本地模型服务：%s", " ".join(args))
+            self._started_at = time.monotonic()
             self._proc = subprocess.Popen(
                 args, cwd=str(binary.parent), stdout=logf, stderr=subprocess.STDOUT,
                 stdin=subprocess.DEVNULL, **kwargs)
+            _assign_to_job(self._job, self._proc)
+            try:
+                _pid_file().write_text(str(self._proc.pid))
+            except OSError:
+                pass
             threading.Thread(target=self._watch_ready, args=(self._proc,), daemon=True).start()
 
     def _watch_ready(self, proc: subprocess.Popen) -> None:
         deadline = time.monotonic() + READY_TIMEOUT_S
-        url = f"http://127.0.0.1:{self._port}/health"
+        port = self._port
         while time.monotonic() < deadline:
             if proc.poll() is not None:
-                self._fail_reason = f"本地模型服务退出（code {proc.returncode}），详见 {SERVER_LOG}"
+                self._fail_reason = self._exit_reason()
                 log.warning(self._fail_reason)
                 return
-            try:
-                if httpx.get(url, timeout=2.0).status_code == 200:
-                    self._ready.set()
-                    log.info("本地模型就绪：%s（%s）", self._model_id, self.backend_summary())
-                    return
-            except httpx.HTTPError:
-                pass
-            time.sleep(0.3)
-        self._fail_reason = "本地模型加载超时"
+            if _health_ok(port):
+                self._ready.set()
+                log.info("本地模型就绪：%s（%s，加载 %.1fs）", self._model_id,
+                         self.backend_summary(), time.monotonic() - self._started_at)
+                return
+            time.sleep(0.5)
+        self._fail_reason = (f"本地模型加载超时（{READY_TIMEOUT_S:.0f}s 仍未就绪）；"
+                             "模型首次从磁盘读入可能被杀毒软件全文扫描拖慢，稍后再试")
         log.warning(self._fail_reason)
 
     def wait_ready(self, timeout: float = READY_TIMEOUT_S) -> None:
@@ -478,6 +595,7 @@ class LocalServer:
     def _stop_locked(self) -> None:
         proc, self._proc = self._proc, None
         self._ready.clear()
+        _pid_file().unlink(missing_ok=True)
         if proc is None or proc.poll() is not None:
             return
         try:
