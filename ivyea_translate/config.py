@@ -88,7 +88,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "primary_language": "zh-CN",    # 自动方向的主语言
         "secondary_language": "en",     # 自动方向的次语言
         "style": "general",
-        # 翻译引擎：auto(配了Key用大模型,否则免费) / free(始终免费) / llm(始终大模型)
+        # 翻译引擎：auto(配了Key用大模型,否则免费,已装本地模型时断网兜底) /
+        # free(始终免费) / llm(始终大模型) / local(始终本地离线模型)
         "engine": "auto",
     },
     "email": {
@@ -132,6 +133,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "onboarded": False,  # 首次启动显示上手引导后置 True
     "free_engine": {
         "preferred": "",  # 记住上次命中的免费端点，下次优先用（免去 DeepL 首次重试等待）
+    },
+    "local_model": {
+        # 用户在设置里选的本地模型 id（见 local_model.MODELS）；下载/启动都按它来
+        "model": "hy-mt2-1.8b-q4",
     },
 }
 

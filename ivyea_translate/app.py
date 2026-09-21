@@ -100,6 +100,9 @@ class TranslateApp(QApplication):
         self._setup_tray()
         ocr_engine.warmup_async()
         self._prewarm_engines()
+        self._sync_local_model()
+        from .local_model import local_server
+        self.aboutToQuit.connect(local_server.stop)
 
         from PySide6.QtCore import QTimer
 
@@ -153,8 +156,25 @@ class TranslateApp(QApplication):
         )
         self.tray.show()
 
+    def _sync_local_model(self) -> None:
+        """引擎选了「本地模型」就在启动/保存设置时把服务拉起来（加载要几秒，别等到
+        第一次翻译才付）；切到免费/大模型就停掉，把那 1-2GB 内存还给用户。
+        「自动」档保留：它只在断网兜底时按需启动。"""
+        from .local_model import installed_model, local_server, model_ready
+
+        mode = self.cfg.get("translate.engine", "auto")
+        try:
+            if mode == "local" and installed_model() is not None:
+                chosen = self.cfg.get("local_model.model") or ""
+                local_server.start(chosen if chosen and model_ready(chosen) else None)
+            elif mode in ("free", "llm"):
+                local_server.stop()
+        except Exception as e:
+            log.warning("本地模型服务处理失败：%s", e)
+
     def _on_settings_saved(self) -> None:
         self._register_hotkeys()
+        self._sync_local_model()
         self.watcher.max_chars = int(self.cfg.get("double_copy.max_chars", 3000))
         self.watcher.double_copy_enabled = bool(self.cfg.get("double_copy.enabled", True))
         # 接口地址可能变了：作废旧连接池，对新端点重建并预热

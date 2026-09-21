@@ -111,7 +111,9 @@ python -m ivyea_translate
 
 开箱即用：默认「自动」引擎——没配大模型就用内置免费翻译（DeepL / Google / 腾讯 TranSmart / 必应 四端点按质量排序，首选没在 0.35 秒内返回就并行补发下一个、谁先回用谁；国内网络下 TranSmart 直连），装完即可划词/截图翻译。选了免费引擎时写作助手降级为直译并明说，不再锁死。
 
-想要更高质量与风格/邮件助手：打开「设置 → 翻译模型」→ 选服务商预设（DeepSeek / OpenAI / OpenRouter / 硅基流动 / 自定义）→ 填 API Key →「测试连接」→ 保存。引擎选择可设为 自动 / 免费 / 我的大模型。
+想要更高质量与风格/邮件助手：打开「设置 → 翻译模型」→ 选服务商预设（DeepSeek / OpenAI / OpenRouter / 硅基流动 / 自定义）→ 填 API Key →「测试连接」→ 保存。引擎选择可设为 自动 / 免费 / 我的大模型 / 本地模型。
+
+**本地离线模型**（设置 → 本地模型 → 下载并启用）：腾讯混元 [Hy-MT2 1.8B](https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF)（GGUF Q4，约 1.1GB）+ llama.cpp `llama-server`，33 种语言，全部在本机运行、内容不出网。运行时与模型按需下载到 `~/.ivyea-translate/local/`（主安装包不变大），断点续传、镜像换源、sha256 钉死校验。Windows 用 Vulkan 版，有核显/独显自动用 GPU，没有自动退 CPU。「自动」引擎装了本地模型后：在线照旧走免费翻译，断网时自动切本地兜底。速度诚实说：短句接近秒出，长段落流式逐字出（CPU 约 15-30 tok/s），它的价值是离线、隐私、不限流，不是比在线更快。
 
 配置文件在 `~/.ivyea-translate/config.json`，历史在 `history.json`。
 
@@ -159,6 +161,7 @@ ivyea_translate/
 ├── translator.py        # prompt 编译（纯函数）+ 翻译线程 + 段落级并发翻译
 ├── ocr.py               # RapidOCR：版面检测 → 逐段识别流水线，行框合并段落（纯函数）
 ├── screenshot_flow.py   # 截图翻译会话：检测→逐段识别→逐段翻译→逐段上屏（弹窗/原位共用）
+├── local_model.py       # 本地离线模型：Hy-MT2 GGUF + llama-server 子进程（下载/校验/生命周期）
 ├── perf.py              # 全链路计时（一行日志看清每段耗时）
 ├── hotkeys.py           # 截图全局热键（RegisterHotKey → Qt 信号）
 ├── clipboard_watch.py   # Ctrl+C+C 触发划词（is_double_copy 纯函数）

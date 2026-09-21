@@ -277,7 +277,7 @@ class ParagraphTranslator(QObject):
             else:
                 parts: List[str] = []
                 for piece in self._client.stream_chat(
-                        build_messages(text, self._target, self._style)):
+                        messages_for(self._client, text, self._target, self._style)):
                     if self._cancelled:
                         return
                     parts.append(piece)
@@ -297,6 +297,42 @@ class ParagraphTranslator(QObject):
         if result:
             cache_put(key, result)
         self.done.emit(idx, result)
+
+
+def build_local_messages(text: str, target_language: str, style: str) -> List[Dict[str, str]]:
+    """本地 Hy-MT 模型的翻译 prompt（纯函数），照官方 README 模板写：
+
+    - 模型没有默认 system prompt，指令全在 user 消息里；
+    - 默认模板："Translate the following text into X. Note that you should only
+      output the translated result without any additional explanation:\n\n{text}"
+    - 带风格时用官方 Style 模板（"translation style must strictly conform to [...]"）。
+    小模型对模板敏感，别拿云端那套长 system 规则去喂它。
+    """
+    lang_name = LANGUAGE_NAMES.get(target_language, target_language)
+    style_rule = STYLE_RULES.get(style, "")
+    if style in ENGLISH_ONLY_STYLES and target_language != "en":
+        style_rule = ""
+    if style_rule:
+        prompt = (
+            f"Please translate the following text into {lang_name}. "
+            f"Note that the translation style must strictly conform to [{style_rule}]. "
+            "Only output the translated result without any additional explanation:\n\n"
+            f"{text}"
+        )
+    else:
+        prompt = (
+            f"Translate the following text into {lang_name}. "
+            "Note that you should only output the translated result without any additional explanation:\n\n"
+            f"{text}"
+        )
+    return [{"role": "user", "content": prompt}]
+
+
+def messages_for(client, text: str, target_language: str, style: str) -> List[Dict[str, str]]:
+    """按客户端类型选 prompt：本地小模型用官方模板，云端大模型用完整规则。"""
+    if getattr(client, "is_local", False):
+        return build_local_messages(text, target_language, style)
+    return build_messages(text, target_language, style)
 
 
 class BlockTranslateWorker(QThread):
@@ -335,7 +371,7 @@ class BlockTranslateWorker(QThread):
                     text, self._target_language,
                     should_abort=lambda: self._cancelled)
             else:
-                messages = build_messages(text, self._target_language, self._style)
+                messages = messages_for(self._client, text, self._target_language, self._style)
                 result = "".join(self._client.stream_chat(messages))
         except LLMError as e:
             if not self._cancelled:
@@ -409,7 +445,8 @@ class TranslateWorker(QThread):
                 if key:
                     cache_put(key, result)
                 return
-            messages = self._messages or build_messages(self._text, self._target_language, self._style)
+            messages = self._messages or messages_for(
+                self._client, self._text, self._target_language, self._style)
             for piece in self._client.stream_chat(messages):
                 if self._cancelled:
                     return

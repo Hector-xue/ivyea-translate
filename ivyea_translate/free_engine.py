@@ -472,13 +472,49 @@ class FreeEngine:
 free_engine = FreeEngine()
 
 
+class OfflineFallbackEngine:
+    """免费引擎 + 本地模型离线兜底（「自动」档、已下载本地模型时用）。
+
+    在线时一切照旧走免费引擎（快、热连接秒回）；免费引擎整条链都失败（断网/
+    全被墙）才落到本地模型。对外仍是 is_free 接口（translate 一次返回），弹窗/原位/
+    主窗不用区分。
+    """
+
+    is_free = True
+
+    def __init__(self, free, local_factory: Callable[[], object]):
+        self._free = free
+        self._local_factory = local_factory
+
+    @property
+    def preferred(self):
+        return self._free.preferred
+
+    def translate(self, text: str, target_language: str,
+                  should_abort: Optional[Callable[[], bool]] = None) -> str:
+        try:
+            return self._free.translate(text, target_language, should_abort=should_abort)
+        except LLMError as e:
+            if "已取消" in str(e):
+                raise
+            log.info("免费引擎不可用，切本地模型兜底：%s", e)
+        from .translator import build_local_messages
+
+        client = self._local_factory()
+        return client.chat(build_local_messages(text, target_language, "general"))
+
+    def test_connection(self) -> str:
+        return self._free.test_connection()
+
+
 def resolve_engine(cfg):
     """按配置解析翻译引擎。
 
-    translate.engine: auto(默认) / free / llm
-     - auto：配置了 API Key 用大模型，否则用免费引擎
-     - free：始终免费引擎
-     - llm ：始终大模型（未配置时报友好错误）
+    translate.engine: auto(默认) / free / llm / local
+     - auto ：配置了 API Key 用大模型；否则免费引擎，已下载本地模型时断网自动兜底
+     - free ：始终免费引擎
+     - llm  ：始终大模型（未配置时报友好错误）
+     - local：始终本地离线模型（未下载时报友好错误）
     """
     from .llm import client_from_config
 
@@ -487,8 +523,18 @@ def resolve_engine(cfg):
         return free_engine
     if mode == "llm":
         return client_from_config(cfg)
+    if mode == "local":
+        from .local_model import local_client
+
+        return local_client()
     api_key = (cfg.get("provider.api_key") or "").strip()
-    return client_from_config(cfg) if api_key else free_engine
+    if api_key:
+        return client_from_config(cfg)
+    from .local_model import installed_model, local_client
+
+    if installed_model() is not None:
+        return OfflineFallbackEngine(free_engine, local_client)
+    return free_engine
 
 
 def uses_free_engine(cfg) -> bool:
@@ -501,6 +547,6 @@ def uses_free_engine(cfg) -> bool:
     mode = cfg.get("translate.engine", "auto")
     if mode == "free":
         return True
-    if mode == "llm":
+    if mode in ("llm", "local"):
         return False
     return not (cfg.get("provider.api_key") or "").strip()

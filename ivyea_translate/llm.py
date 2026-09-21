@@ -116,6 +116,9 @@ class LLMClient:
         self.model = model
         self.temperature = temperature
         self.timeout = timeout
+        # 额外采样参数（top_p / top_k / repeat_penalty 等），本地 llama-server 用；
+        # 云端 OpenAI 兼容接口多数忽略未知字段，默认不带
+        self.extra_body: Dict[str, object] = {}
 
     def _headers(self) -> Dict[str, str]:
         return {
@@ -130,6 +133,7 @@ class LLMClient:
             "messages": messages,
             "temperature": self.temperature,
             "stream": True,
+            **self.extra_body,
         }
         try:
             with _http_client(self.base_url).stream(

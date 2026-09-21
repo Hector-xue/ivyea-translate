@@ -1018,11 +1018,14 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         self.engine_combo.addItem("自动（未配置模型时用免费翻译）", "auto")
         self.engine_combo.addItem("免费翻译（无需配置，开箱即用）", "free")
         self.engine_combo.addItem("我的大模型", "llm")
+        self.engine_combo.addItem("本地模型（离线，需先下载）", "local")
         self._select_combo_data(self.engine_combo, self.cfg.get("translate.engine", "auto"))
         eng_form.addRow(_row_label("引擎"), _with_hint(
             self.engine_combo,
             "免费翻译基于公开翻译接口，无需 API Key 即可直接使用；"
-            "配置大模型可获得更高质量、风格控制与邮件助手。",
+            "配置大模型可获得更高质量、风格控制与写作改写；"
+            "本地模型断网可用、不出本机。「自动」= 配了 Key 用大模型，否则免费翻译，"
+            "装了本地模型时断网自动兜底。",
         ))
         # 自动互译语言对（目标语言选"自动"时在这两者间智能切换）
         pair_row = QHBoxLayout()
@@ -1095,6 +1098,8 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         test_row.addWidget(self.test_btn)
         mc.addLayout(test_row)
         lay.addWidget(model_card)
+
+        lay.addWidget(self._build_local_model_card())
 
         # 快捷键 + 行为卡
         hk_card = _glass_card()
@@ -1422,6 +1427,130 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         app = QApplication.instance()
         if app is not None and hasattr(app, "_start_update"):
             app._start_update(feed)  # 统一走 app 的一键更新（进度条→静默安装→重启）
+
+    # ================= 本地模型卡 =================
+
+    def _build_local_model_card(self) -> QWidget:
+        from PySide6.QtWidgets import QProgressBar
+
+        from .. import local_model as lm
+
+        card = _glass_card()
+        lc = QVBoxLayout(card)
+        lc.setContentsMargins(16, 12, 16, 13)
+        title = QLabel("本地模型（离线翻译）")
+        title.setObjectName("CardTitle")
+        lc.addWidget(title)
+        form = QFormLayout()
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(8)
+        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignTop)
+
+        self.local_model_combo = QComboBox()
+        for mid, meta in lm.MODELS.items():
+            self.local_model_combo.addItem(meta["label"], mid)
+        self._select_combo_data(self.local_model_combo, self.cfg.get("local_model.model", lm.DEFAULT_MODEL))
+        form.addRow(_row_label("模型"), _with_hint(
+            self.local_model_combo,
+            "腾讯混元 Hy-MT2 翻译模型 + llama.cpp，33 种语言，全部在本机运行、不出网。"
+            "有核显/独显自动用 GPU，没有就用 CPU。速度：短句接近秒出，长段落流式逐字出，"
+            "不会比在线引擎更快——它的价值是断网可用、内容不出本机、不限流。",
+        ))
+        self.local_status = QLabel(lm.installed_summary())
+        self.local_status.setObjectName("Hint")
+        self.local_status.setWordWrap(True)
+        form.addRow(_row_label("状态", pad_top=0), self.local_status)
+        lc.addLayout(form)
+
+        self.local_progress = QProgressBar()
+        self.local_progress.setRange(0, 100)
+        self.local_progress.setTextVisible(False)
+        self.local_progress.setFixedHeight(6)
+        self.local_progress.setVisible(False)
+        lc.addWidget(self.local_progress)
+
+        row = QHBoxLayout()
+        self.local_progress_label = QLabel("")
+        self.local_progress_label.setObjectName("Hint")
+        row.addWidget(self.local_progress_label, 1)
+        self.local_remove_btn = QPushButton("删除")
+        self.local_remove_btn.setObjectName("Ghost")
+        self.local_remove_btn.clicked.connect(self._on_local_remove)
+        row.addWidget(self.local_remove_btn)
+        self.local_install_btn = QPushButton("下载并启用")
+        self.local_install_btn.clicked.connect(self._on_local_install)
+        row.addWidget(self.local_install_btn)
+        lc.addLayout(row)
+        self._local_installer = None
+        self._sync_local_buttons()
+        return card
+
+    def _sync_local_buttons(self) -> None:
+        from .. import local_model as lm
+
+        installing = self._local_installer is not None and self._local_installer.isRunning()
+        installed = lm.installed_model() is not None
+        self.local_install_btn.setText("取消下载" if installing else ("重新下载" if installed else "下载并启用"))
+        self.local_remove_btn.setEnabled(installed and not installing)
+        self.local_model_combo.setEnabled(not installing)
+        self.local_status.setText(lm.installed_summary())
+
+    def _on_local_install(self) -> None:
+        from .. import local_model as lm
+
+        if self._local_installer is not None and self._local_installer.isRunning():
+            self._local_installer.cancel()
+            self.local_install_btn.setEnabled(False)
+            return
+        mid = self.local_model_combo.currentData()
+        self.cfg.set("local_model.model", mid)
+        self.cfg.save()
+        installer = lm._qt_installer_class()(mid, parent=self)
+        installer.progress.connect(self._on_local_progress)
+        installer.finished_ok.connect(self._on_local_installed)
+        installer.failed.connect(self._on_local_failed)
+        self._local_installer = installer
+        self.local_progress.setVisible(True)
+        self.local_progress.setRange(0, 0)
+        self.local_progress_label.setText("准备下载…")
+        installer.start()
+        self._sync_local_buttons()
+
+    def _on_local_progress(self, stage: str, pct: int) -> None:
+        if pct < 0:
+            self.local_progress.setRange(0, 0)
+        else:
+            self.local_progress.setRange(0, 100)
+            self.local_progress.setValue(pct)
+        self.local_progress_label.setText(stage)
+
+    def _on_local_installed(self, model_id: str, backend: str) -> None:
+        self.local_progress.setVisible(False)
+        self.local_progress_label.setStyleSheet(f"color: {theme.OK};")
+        self.local_progress_label.setText(f"已启用本地模型（{backend or '运行中'}）")
+        self.local_install_btn.setEnabled(True)
+        # 下载完就是要用它：引擎切到本地并保存，其余设置保持用户当前所填
+        self._select_combo_data(self.engine_combo, "local")
+        self._on_save_settings()
+        self._sync_local_buttons()
+
+    def _on_local_failed(self, message: str) -> None:
+        self.local_progress.setVisible(False)
+        self.local_progress_label.setStyleSheet(f"color: {theme.ACCENT};")
+        self.local_progress_label.setText(message)
+        self.local_install_btn.setEnabled(True)
+        self._sync_local_buttons()
+
+    def _on_local_remove(self) -> None:
+        from .. import local_model as lm
+
+        lm.remove_all()
+        if self.engine_combo.currentData() == "local":
+            self._select_combo_data(self.engine_combo, "auto")
+            self._on_save_settings()
+        self.local_progress_label.setStyleSheet("")
+        self.local_progress_label.setText("已删除本地模型与运行时")
+        self._sync_local_buttons()
 
     def _on_preset_changed(self) -> None:
         key = self.preset_combo.currentData()
