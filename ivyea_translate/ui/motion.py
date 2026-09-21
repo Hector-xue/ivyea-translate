@@ -14,9 +14,9 @@ import math
 import random
 from typing import Dict, List, Optional
 
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import QPointF, QRect, QRectF, Qt
 from PySide6.QtGui import (
-    QColor,
+    QColor, QRegion,
     QLinearGradient,
     QPainter,
     QPainterPath,
@@ -73,6 +73,27 @@ class Motion:
     def draw(self, p: QPainter, w: int, h: int) -> None:
         raise NotImplementedError
 
+    def dirty_region(self, w: int, h: int) -> Optional[QRegion]:
+        """这一帧真正变了的区域；None = 整层都要重画。
+
+        背景层每帧 update() 整窗，上面压着的透明卡片/文字全跟着重画（实测一帧
+        18ms，30fps 就是半个核常年空转，滚动一卡一卡的根子就在这）。动效每帧其实
+        只动几片叶子/几个尖端，把脏区报出来，宿主只 update(区域)。子类默认整层。
+        """
+        return None
+
+
+def _rect_around(x: float, y: float, radius: float) -> QRect:
+    r = int(radius) + 2
+    return QRect(int(x) - r, int(y) - r, 2 * r, 2 * r)
+
+
+def _region_of(rects) -> Optional[QRegion]:
+    region = QRegion()
+    for r in rects:
+        region = region.united(r)
+    return region
+
 
 # ============================ 常春藤：藤蔓生长 + 真实叶片 ============================
 
@@ -106,11 +127,14 @@ class IvyMotion(Motion):
         self.vines: List[_Vine] = []
         self.live: List[dict] = []   # 尖端附近还在摆动的叶子
         self.cycle_t = 0.0
+        self._dirty: List[QRect] = []   # 本帧 grow 画过的地方（茎段 + 新叶）
+        self._full_dirty = True         # reset/淡出期：整层重画
 
     def reset(self) -> None:
         self.vines = []
         self.live = []
         self.cycle_t = 0.0
+        self._full_dirty = True
         w, h = self._w, self._h
         if w <= 0 or h <= 0:
             return
@@ -144,6 +168,8 @@ class IvyMotion(Motion):
                 p.setPen(QPen(stem, v.width, Qt.SolidLine, Qt.RoundCap))
                 p.setOpacity(0.55)
                 p.drawLine(QPointF(v.x, v.y), QPointF(nx, ny))
+                self._dirty.append(_rect_around((v.x + nx) / 2, (v.y + ny) / 2,
+                                                max(abs(nx - v.x), abs(ny - v.y)) / 2 + v.width + 2))
                 dirty = True
                 v.x, v.y = nx, ny
                 v.since_leaf += 1
@@ -171,6 +197,7 @@ class IvyMotion(Motion):
         wpx, hpx = pm.width() * scale, pm.height() * scale
         p.drawPixmap(QRectF(-wpx / 2, -hpx * 0.15, wpx, hpx), pm, QRectF(pm.rect()))
         p.restore()
+        self._dirty.append(_rect_around(v.x, v.y, max(wpx, hpx) * 1.2))
         if len(self.live) < 14:
             self.live.append({"x": v.x, "y": v.y, "ang": ang, "size": size,
                               "pm": pm, "phase": self.rng.uniform(0, 6.3)})
@@ -186,6 +213,19 @@ class IvyMotion(Motion):
         """整丛的淡出系数：一轮末尾整体褪去，再从头长。"""
         left = self.CYCLE - self.cycle_t
         return max(0.0, min(1.0, left / self.FADE))
+
+    def dirty_region(self, w: int, h: int) -> Optional[QRegion]:
+        """摆动的叶子 + 本帧长出的茎/叶；淡出期与 reset 后整层。"""
+        if self._full_dirty or self.bake_alpha() < 1.0:
+            self._full_dirty = False
+            self._dirty = []
+            return None
+        rects = list(self._dirty)
+        self._dirty = []
+        for lf in self.live:
+            # 叶子绕 (x, y) 旋转、锚点偏 15%：半径取 size 的 1.3 倍稳妥覆盖
+            rects.append(_rect_around(lf["x"], lf["y"], lf["size"] * 1.3))
+        return _region_of(rects)
 
     def draw(self, p: QPainter, w: int, h: int) -> None:
         """活动层：尖端附近的叶子随风轻摆。"""
@@ -318,12 +358,19 @@ class PetalsMotion(Motion):
 
     def step(self, dt: float, w: int, h: int) -> None:
         super().step(dt, w, h)
+        self._dirty = []
         for it in self.items:
+            self._dirty.append(_rect_around(it["x"], it["y"], it["size"] * 0.75))
             it["y"] += it["vy"] * dt
             it["x"] += math.sin(self.t * 1.3 + it["phase"]) * it["sway"] * dt
             it["ang"] += it["spin"] * 60 * dt
             if it["y"] > h + 40:
                 it.update(self._spawn(w, h))
+            self._dirty.append(_rect_around(it["x"], it["y"], it["size"] * 0.75))
+
+    def dirty_region(self, w: int, h: int) -> Optional[QRegion]:
+        rects = getattr(self, "_dirty", None)
+        return _region_of(rects) if rects else None
 
     def draw(self, p: QPainter, w: int, h: int) -> None:
         for it in self.items:

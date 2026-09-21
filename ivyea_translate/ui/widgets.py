@@ -9,9 +9,11 @@ AutoGrowTextEdit：高度随内容走的文本框。
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPixmap, QTextOption
-from PySide6.QtWidgets import QSizePolicy, QTextEdit
+from PySide6.QtWidgets import QScrollArea, QSizePolicy, QTextEdit
 
 MAX_SIZE = 16777215  # Qt 的尺寸上限，等价于"不封顶"
 
@@ -122,3 +124,53 @@ class AutoGrowTextEdit(QTextEdit):
             target = min(target, self._max_h)
         if self.height() != target:
             self.setFixedHeight(target)
+
+
+class SmoothScrollArea(QScrollArea):
+    """滚轮平滑滚动的 QScrollArea。
+
+    Qt 默认滚轮一格直接跳 3 行（60px），内容"啪"地挪位，和现代应用的惯性滚动比
+    就是一顿一顿的。这里把每格滚动做成 160ms 的缓出动画（连续滚动时目标累加、动画
+    续跑，不会越滚越慢）；触控板发的是像素级增量（pixelDelta），本来就是连续的，
+    原样交给基类。滚动条拖动、键盘翻页不动。
+    """
+
+    DURATION_MS = 160
+    STEP_PX = 72          # 滚轮一格滚多少像素（略大于 Qt 默认的 60，更接近浏览器）
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from PySide6.QtCore import QEasingCurve, QVariantAnimation
+
+        self._anim = QVariantAnimation(self)
+        self._anim.setDuration(self.DURATION_MS)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.valueChanged.connect(self._apply)
+        self._target: Optional[int] = None
+
+    def wheelEvent(self, event):
+        from PySide6.QtCore import QAbstractAnimation
+
+        bar = self.verticalScrollBar()
+        pixel = event.pixelDelta()
+        if not pixel.isNull() or bar.maximum() == 0:
+            self._anim.stop()
+            self._target = None
+            return super().wheelEvent(event)      # 触控板 / 无需滚动：原生行为
+        notches = event.angleDelta().y() / 120.0
+        if notches == 0:
+            return super().wheelEvent(event)
+        base = self._target if self._anim.state() == QAbstractAnimation.Running and self._target is not None else bar.value()
+        target = max(0, min(bar.maximum(), int(round(base - notches * self.STEP_PX))))
+        if target == bar.value() and self._anim.state() != QAbstractAnimation.Running:
+            event.accept()
+            return
+        self._target = target
+        self._anim.stop()
+        self._anim.setStartValue(bar.value())
+        self._anim.setEndValue(target)
+        self._anim.start()
+        event.accept()
+
+    def _apply(self, value) -> None:
+        self.verticalScrollBar().setValue(int(value))

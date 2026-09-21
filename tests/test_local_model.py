@@ -48,10 +48,11 @@ def test_summarize_backend_reads_gpu_or_cpu():
     assert lm.summarize_backend("") == ""
 
 
-def test_urls_try_official_then_mirror():
+def test_urls_try_modelscope_then_hf_then_mirror():
     urls = lm.model_urls("hy-mt2-1.8b-q4")
-    assert urls[0].startswith("https://huggingface.co/tencent/")
-    assert urls[1].startswith("https://hf-mirror.com/tencent/")
+    assert urls[0] == "https://modelscope.cn/models/Tencent-Hunyuan/Hy-MT2-1.8B-GGUF/resolve/master/Hy-MT2-1.8B-Q4_K_M.gguf"
+    assert urls[1].startswith("https://huggingface.co/tencent/")
+    assert urls[2].startswith("https://hf-mirror.com/tencent/")
     assert all(u.endswith("Hy-MT2-1.8B-Q4_K_M.gguf") for u in urls)
 
 
@@ -146,7 +147,36 @@ def test_download_rejects_bad_hash_and_deletes_part(tmp_path):
 def test_download_all_sources_failed_lists_them(tmp_path):
     http = _FakeHttp({"https://a/x": {"fail": True}, "https://b/x": {"fail": True}})
     with pytest.raises(LLMError, match="下载失败"):
-        lm.download_file(["https://a/x", "https://b/x"], tmp_path / "f", "0" * 64, client=http)
+        lm.download_file(["https://a/x", "https://b/x"], tmp_path / "f", "0" * 64, client=http, rounds=1)
+
+
+def test_download_retries_rounds_with_resume(tmp_path, monkeypatch):
+    """第一轮两个源都断，第二轮续上：不从零重下。"""
+    monkeypatch.setattr(lm, "DOWNLOAD_RETRY_WAIT_S", 0.0)
+    data = b"r" * 5000
+    sha = hashlib.sha256(data).hexdigest()
+    state = {"n": 0}
+
+    class Flaky(_FakeHttp):
+        def stream(self, method, url, headers=None):
+            state["n"] += 1
+            if state["n"] <= 2:
+                raise IOError("reset")
+            return super().stream(method, url, headers)
+
+    http = Flaky({"https://a/x": {"data": data}, "https://b/x": {"data": data}})
+    (tmp_path / "f.part").write_bytes(data[:1000])
+    lm.download_file(["https://a/x", "https://b/x"], tmp_path / "f", sha, client=http, rounds=2)
+    assert (tmp_path / "f").read_bytes() == data
+    assert http.calls[-1][1]["Range"] == "bytes=1000-"      # 第二轮仍是续传
+
+
+def test_has_local_files_sees_partial_download(local_dir):
+    assert lm.has_local_files() is False
+    part = lm.model_path("hy-mt2-1.8b-q4").with_suffix(".gguf.part")
+    part.parent.mkdir(parents=True)
+    part.write_bytes(b"x")
+    assert lm.has_local_files() is True
 
 
 def test_download_abort_keeps_part_for_resume(tmp_path):
@@ -336,6 +366,13 @@ def test_settings_local_card_states(qapp, tmp_path, local_dir):
     assert win.engine_combo.findData("local") >= 0
     assert win.local_install_btn.text() == "下载并启用"
     assert not win.local_remove_btn.isEnabled()
+    # 下载失败留下半截文件：删除必须可点
+    part = lm.model_path("hy-mt2-1.8b-q4").with_suffix(".gguf.part")
+    part.parent.mkdir(parents=True)
+    part.write_bytes(b"x")
+    win._sync_local_buttons()
+    assert win.local_install_btn.text() == "下载并启用" and win.local_remove_btn.isEnabled()
+    assert win.local_progress_label.wordWrap()
     _fake_install(local_dir)
     win._sync_local_buttons()
     assert win.local_install_btn.text() == "重新下载"

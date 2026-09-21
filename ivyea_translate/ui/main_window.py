@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import sys
 import time
 from pathlib import Path
 from typing import List, Optional
@@ -34,6 +36,9 @@ from .backdrop import Backdrop
 from .hero import HeroBanner
 from .titlebar import ShellWindowMixin, TitleBar, apply_frameless
 from .widgets import AutoGrowTextEdit
+
+
+log = logging.getLogger(__name__)
 
 
 class QComboBox(QComboBox):  # noqa: F811  —— 全模块下拉框统一为"悬停滚轮不改值"
@@ -99,7 +104,9 @@ def _with_hint(field, hint: str) -> QWidget:
 
 def _scrollable(inner: QWidget) -> QScrollArea:
     """把页面包进滚动容器：窗口变小时整页滚动，不再挤压/溢出/裁切。"""
-    sa = QScrollArea()
+    from .widgets import SmoothScrollArea
+
+    sa = SmoothScrollArea()
     sa.setWidgetResizable(True)
     sa.setFrameShape(QScrollArea.NoFrame)
     sa.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -988,11 +995,14 @@ class MainWindow(ShellWindowMixin, QMainWindow):
 
     def _build_settings_tab(self) -> QWidget:
         # 外层滚动容器：窗口缩小/全屏拉伸时表单保持自然高度，不被压矮或抻高
-        from PySide6.QtWidgets import QScrollArea
+        from .widgets import SmoothScrollArea
 
-        scroll = QScrollArea()
+        scroll = SmoothScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
+        # 设置页只许纵向滚：任何一个长文案把内容撑宽都不该变成横向滚动条 +
+        # 点保存后整页往右跑（焦点自动 ensureVisible 拽的）。宽度靠控件自己换行
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setStyleSheet("QScrollArea { background: transparent; } QScrollArea > QWidget > QWidget { background: transparent; }")
         page = QWidget()
         lay = QVBoxLayout(page)
@@ -1472,6 +1482,9 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         row = QHBoxLayout()
         self.local_progress_label = QLabel("")
         self.local_progress_label.setObjectName("Hint")
+        self.local_progress_label.setWordWrap(True)        # 报错串很长：不换行会把整页撑宽
+        self.local_progress_label.setTextFormat(Qt.PlainText)
+        self.local_progress_label.setMinimumWidth(0)
         row.addWidget(self.local_progress_label, 1)
         self.local_remove_btn = QPushButton("删除")
         self.local_remove_btn.setObjectName("Ghost")
@@ -1491,7 +1504,8 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         installing = self._local_installer is not None and self._local_installer.isRunning()
         installed = lm.installed_model() is not None
         self.local_install_btn.setText("取消下载" if installing else ("重新下载" if installed else "下载并启用"))
-        self.local_remove_btn.setEnabled(installed and not installing)
+        # 下载失败/中断也会留下运行时和半截模型，"删除"得能清掉它们，不只装好了才能删
+        self.local_remove_btn.setEnabled(lm.has_local_files() and not installing)
         self.local_model_combo.setEnabled(not installing)
         self.local_status.setText(lm.installed_summary())
 
@@ -1636,6 +1650,39 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         super().showEvent(event)
         self._sync_shell_state()  # 最大化状态下显示时收掉投影留白与圆角
         self._sync_titlebar_ink()  # 底图这时才按真实尺寸烘焙出来，明暗要重新量
+        if not getattr(self, "_style_logged", False):
+            self._style_logged = True
+            from . import winshell
+
+            winshell.log_style(int(self.winId()), "首次显示")
+
+    def nativeEvent(self, event_type, message):
+        """Windows：记录显示/尺寸/系统命令消息，并修"系统显示了、Qt 还当最小化"的错位
+        （症状=显示桌面后主窗自己冒出来且点不动）。详见 ui/winshell.py。"""
+        if self._frameless and sys.platform == "win32":
+            try:
+                from . import winshell
+
+                msg, wparam, lparam = winshell.read_msg(message)
+                text = winshell.describe_event(msg, wparam, lparam)
+                if text:
+                    qt_min = bool(self.windowState() & Qt.WindowMinimized)
+                    iconic = winshell.is_iconic(int(self.winId()))
+                    log.info("窗口事件：%s | Qt最小化=%s 原生图标态=%s 可见=%s 激活=%s",
+                             text, qt_min, iconic, self.isVisible(), self.isActiveWindow())
+                    if winshell.should_resync(msg, wparam, qt_min, iconic):
+                        log.warning("窗口状态错位：系统已显示但 Qt 仍认为最小化，掰回正常态")
+                        from PySide6.QtCore import QTimer
+
+                        QTimer.singleShot(0, self._resync_from_shell_show)
+            except Exception as e:  # 诊断不能把窗口搞崩
+                log.debug("nativeEvent 诊断失败：%s", e)
+        return super().nativeEvent(event_type, message)
+
+    def _resync_from_shell_show(self) -> None:
+        self.setWindowState(self.windowState() & ~Qt.WindowMinimized)
+        self.update()
+        self.repaint()
 
     # 关窗只是隐藏（常驻托盘）；退出流程中必须放行
     def closeEvent(self, event):

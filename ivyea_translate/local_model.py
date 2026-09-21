@@ -72,8 +72,16 @@ MODELS: Dict[str, Dict] = {
 DEFAULT_MODEL = "hy-mt2-1.8b-q4"
 
 # 下载源按顺序试（连不上/中断就换下一个续传）。sha256 钉死，镜像不可信也无妨
-HF_HOSTS = ["https://huggingface.co", "https://hf-mirror.com"]
-GITHUB_HOSTS = ["https://github.com", "https://ghfast.top/https://github.com"]
+# 模型：ModelScope（魔搭，国内直连、同一文件同一 sha256）→ HF 官方 → hf-mirror
+MODEL_SOURCES = [
+    "https://modelscope.cn/models/Tencent-Hunyuan/{repo_name}/resolve/master/{file}",
+    "https://huggingface.co/{repo}/resolve/main/{file}",
+    "https://hf-mirror.com/{repo}/resolve/main/{file}",
+]
+GITHUB_HOSTS = ["https://github.com", "https://ghfast.top/https://github.com",
+                "https://gh-proxy.com/https://github.com"]
+DOWNLOAD_ROUNDS = 3       # 所有源都失败后再从头轮几遍（续传，不白下）
+DOWNLOAD_RETRY_WAIT_S = 2.0
 
 LOCAL_DIR = CONFIG_DIR / "local"
 SERVER_LOG = LOCAL_DIR / "llama-server.log"
@@ -157,7 +165,8 @@ def runtime_urls() -> List[str]:
 
 def model_urls(model_id: str) -> List[str]:
     meta = MODELS[model_id]
-    return [f"{host}/{meta['repo']}/resolve/main/{meta['file']}" for host in HF_HOSTS]
+    repo_name = meta["repo"].split("/", 1)[1]
+    return [t.format(repo=meta["repo"], repo_name=repo_name, file=meta["file"]) for t in MODEL_SOURCES]
 
 
 # ---------- 下载 / 校验 / 解压 ----------
@@ -174,7 +183,8 @@ def download_file(urls: List[str], dest: Path, sha256: str,
                   progress: Optional[Callable[[int, int], None]] = None,
                   should_abort: Optional[Callable[[], bool]] = None,
                   expected_size: int = 0,
-                  client: Optional[httpx.Client] = None) -> Path:
+                  client: Optional[httpx.Client] = None,
+                  rounds: int = DOWNLOAD_ROUNDS) -> Path:
     """多源断点续传下载到 dest，最后校验 sha256（不过就删）。
 
     .part 文件保留进度：网断了、用户关了、换镜像了都从已下载的字节续；
@@ -184,21 +194,33 @@ def download_file(urls: List[str], dest: Path, sha256: str,
     part = dest.with_suffix(dest.suffix + ".part")
     own_client = client is None
     if own_client:
-        client = httpx.Client(timeout=httpx.Timeout(60.0, connect=10.0), follow_redirects=True,
+        # 国内到境外源 TLS 握手常要十几秒，connect 给足；读超时管的是中途断流
+        client = httpx.Client(timeout=httpx.Timeout(60.0, connect=25.0), follow_redirects=True,
                               headers={"User-Agent": "IvyeaTranslate"})
     errors: List[str] = []
+    ok = False
     try:
-        for url in urls:
-            try:
-                _download_one(client, url, part, progress, should_abort, expected_size)
+        for round_no in range(rounds):
+            for url in urls:
+                try:
+                    _download_one(client, url, part, progress, should_abort, expected_size)
+                    ok = True
+                    break
+                except _Aborted:
+                    raise
+                except Exception as e:
+                    errors.append(f"{url.split('/')[2]}: {e.__class__.__name__}: {str(e)[:60]}")
+                    log.info("下载源失败，换下一个：%s", errors[-1])
+            if ok:
                 break
-            except _Aborted:
-                raise
-            except Exception as e:
-                errors.append(f"{url.split('/')[2]}: {e.__class__.__name__}: {str(e)[:80]}")
-                log.info("下载源失败，换下一个：%s", errors[-1])
-        else:
-            raise LLMError("下载失败（" + "；".join(errors) + "）")
+            if round_no < rounds - 1:
+                if should_abort is not None and should_abort():
+                    raise _Aborted()
+                time.sleep(DOWNLOAD_RETRY_WAIT_S)
+        if not ok:
+            # 只报每个源最后一次的原因，别把三轮的错堆成一屏
+            last = {e.split(":", 1)[0]: e for e in errors}
+            raise LLMError("下载失败，请检查网络后重试（" + "；".join(last.values()) + "）")
     finally:
         if own_client:
             client.close()
@@ -484,6 +506,15 @@ def local_client() -> LocalClient:
     if not local_server.running:
         local_server.start(mid)
     return LocalClient(mid)
+
+
+def has_local_files() -> bool:
+    """本地目录里有没有任何东西（运行时 / 完整或半截模型 / 下载残留）。"""
+    try:
+        return LOCAL_DIR.exists() and any(
+            p.is_file() and p.name != SERVER_LOG.name for p in LOCAL_DIR.rglob("*"))
+    except OSError:
+        return False
 
 
 def remove_all() -> None:

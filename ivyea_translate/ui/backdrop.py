@@ -128,11 +128,18 @@ class Backdrop(QWidget):
         now = time.monotonic()
         dt = min(0.2, now - self._last)   # 卡顿/休眠后不要一次跳很远
         self._last = now
-        if self._engine is not None:
-            self._engine.step(dt, self.width(), self.height())
-            if self._engine.baked:
-                self._grow(dt)
-        self.update()
+        if self._engine is None:
+            self.update()
+            return
+        self._engine.step(dt, self.width(), self.height())
+        if self._engine.baked:
+            self._grow(dt)
+        # 只重画动效真正变了的那几块：整窗 update 会把上面所有透明卡片一起拖下水
+        region = self._engine.dirty_region(self.width(), self.height())
+        if region is None:
+            self.update()
+        elif not region.isEmpty():
+            self.update(region)
 
     # ---------- 绘制 ----------
 
