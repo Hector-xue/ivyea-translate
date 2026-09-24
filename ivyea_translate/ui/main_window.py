@@ -34,7 +34,7 @@ from ..translator import TranslateWorker
 from . import theme
 from .backdrop import Backdrop
 from .hero import HeroBanner
-from .titlebar import ShellWindowMixin, TitleBar, apply_frameless
+from .titlebar import RESIZE_BAND, ShellWindowMixin, TitleBar, apply_frameless
 from .widgets import AutoGrowTextEdit
 
 
@@ -1707,8 +1707,13 @@ class MainWindow(ShellWindowMixin, QMainWindow):
                         return False, 0
                     if msg == winshell.WM_NCCALCSIZE:
                         return True, winshell.handle_nccalcsize(hwnd, wparam, lparam)
+                    if msg in winshell.SUPPRESSED_NC_PAINT:
+                        return True, 0   # 别让系统往窗口上画老式标题栏/边框（见 winshell）
+                    if msg in winshell.REDRAW_LOCKED:
+                        return True, winshell.def_window_proc_without_redraw(hwnd, msg, wparam, lparam)
                     if msg == winshell.WM_NCHITTEST:
-                        return True, winshell.HTCLIENT   # 抓边/拖动都由 Qt 侧 startSystem* 发起
+                        # 边缘抓边带报边框命中码，缩放整个交给系统（见 winshell.hit_test_edges）
+                        return True, winshell.nc_hit_test(hwnd, lparam, RESIZE_BAND)
                     if msg == winshell.WM_NCACTIVATE:
                         # lParam=-1：激活切换时别让系统重画（不存在的）非客户区，避免闪一下边框
                         return True, winshell.def_window_proc(hwnd, msg, wparam, -1)

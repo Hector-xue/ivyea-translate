@@ -124,6 +124,56 @@ WM_NCCALCSIZE = 0x0083
 WM_NCHITTEST = 0x0084
 WM_NCACTIVATE = 0x0086
 HTCLIENT = 1
+HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT = 10, 11, 12, 13, 14
+HTBOTTOM, HTBOTTOMLEFT, HTBOTTOMRIGHT = 15, 16, 17
+
+
+def hit_test_edges(x: int, y: int, rect: tuple, band: int) -> int:
+    """纯函数：屏幕坐标 (x, y) 落在窗口矩形 rect=(l, t, r, b) 的哪条抓边带上 -> HT* 码。
+
+    缩放一律交给系统：WM_NCHITTEST 报边框命中码，系统自己跑缩放循环（光标形状、贴边、
+    多屏 DPI 都对），和记事本同一条路。不能再用 Qt 的 startSystemResize：它是在客户区
+    收到点击后投递 SC_SIZE 模拟，原生外壳下这条路进了循环就卡住（v0.36~v0.37.2 窗口
+    根本拖不动大小，只画出一圈老式边框）。
+    """
+    l, t, r, b = rect
+    left, right = x < l + band, x >= r - band
+    top, bottom = y < t + band, y >= b - band
+    if top and left:
+        return HTTOPLEFT
+    if top and right:
+        return HTTOPRIGHT
+    if bottom and left:
+        return HTBOTTOMLEFT
+    if bottom and right:
+        return HTBOTTOMRIGHT
+    if left:
+        return HTLEFT
+    if right:
+        return HTRIGHT
+    if top:
+        return HTTOP
+    if bottom:
+        return HTBOTTOM
+    return HTCLIENT
+
+
+def nc_hit_test(hwnd: int, lparam: int, band_logical: int) -> int:
+    """WM_NCHITTEST：最大化时整窗都是客户区，否则按抓边带（逻辑像素 × DPI 缩放）判定。"""
+    u = ctypes.windll.user32
+    h = ctypes.c_void_p(hwnd)
+    if u.IsZoomed(h):
+        return HTCLIENT
+    x = ctypes.c_short(lparam & 0xFFFF).value
+    y = ctypes.c_short((lparam >> 16) & 0xFFFF).value
+    rc = _RECT()
+    u.GetWindowRect(h, ctypes.byref(rc))
+    try:
+        dpi = u.GetDpiForWindow(h) or 96
+    except Exception:
+        dpi = 96
+    band = max(1, round(band_logical * dpi / 96))
+    return hit_test_edges(x, y, (rc.left, rc.top, rc.right, rc.bottom), band)
 
 WS_CAPTION = 0x00C00000
 WS_THICKFRAME = 0x00040000
@@ -142,8 +192,16 @@ DWMWA_WINDOW_CORNER_PREFERENCE = 33
 
 
 def native_chrome_style(style: int) -> int:
-    """纯函数：在现有样式上补齐"普通窗口"该有的位。WS_POPUP 保留不动（Qt 建的）。"""
-    return style | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX
+    """纯函数：补齐外壳认"普通窗口"要的位（可缩放边框 + 系统菜单 + 最小化/最大化），
+    并且**不要 WS_CAPTION**。WS_POPUP 保留不动（Qt 建的）。
+
+    v0.36~v0.37.2 带着 WS_CAPTION：DWM 非客户区渲染一关，系统在失焦/激活切换、改标题、
+    进入缩放时会退回老式主题，把整条标题栏（灰色最小化/最大化、红色关闭、标题文字）
+    直接画到窗口上——用户拖动缩放时看到的"一圈窗口"。没有标题栏样式，系统就无从画起。
+    Win+D/显示桌面靠的是 WS_MINIMIZEBOX（v0.35.0 的根因），与 WS_CAPTION 无关，
+    Windows 云机实测：去掉后 Win+D 再开别的程序主窗不冒出来、最小化按钮照常可点。
+    """
+    return (style | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX) & ~WS_CAPTION & 0xFFFFFFFF
 
 
 def maximized_inset(frame_x: int, frame_y: int, zoomed: bool) -> tuple:
@@ -213,7 +271,7 @@ def install_native_chrome(hwnd: int) -> bool:
         u = ctypes.windll.user32
         h = ctypes.c_void_p(hwnd)
         style = u.GetWindowLongW(h, GWL_STYLE) & 0xFFFFFFFF
-        u.SetWindowLongW(h, GWL_STYLE, ctypes.c_int(native_chrome_style(style) & 0xFFFFFFFF).value)
+        u.SetWindowLongW(h, GWL_STYLE, ctypes.c_int(native_chrome_style(style)).value)
         ex = u.GetWindowLongW(h, GWL_EXSTYLE) & 0xFFFFFFFF
         if ex & WS_EX_LAYERED:
             u.SetWindowLongW(h, GWL_EXSTYLE, ctypes.c_int(ex & ~WS_EX_LAYERED & 0xFFFFFFFF).value)
@@ -235,6 +293,42 @@ def install_native_chrome(hwnd: int) -> bool:
     except Exception as e:
         log.warning("原生外壳安装失败，保持纯无边框：%s", e)
         return False
+
+
+# ---------- 系统别往我们身上画老式边框 ----------
+#
+# 关掉 DWM 非客户区渲染（为了不要系统方形投影/圆角/描边）之后，Windows 在"改变大小、
+# 改标题/图标、激活切换"这些时刻会退回老式主题，直接往窗口 DC 上画一整套标题栏
+# 和边框（灰色最小化/最大化、红色关闭、标题文字），而且无视 WM_NCCALCSIZE 给的 0
+# 宽非客户区——v0.37.2 用户拖动缩放时看到的"一圈窗口"就是它。Chromium
+# （HWNDMessageHandler）和 qwindowkit 的做法：
+#   - WM_NCPAINT、WM_NCUAHDRAWCAPTION(0xAE)、WM_NCUAHDRAWFRAME(0xAF) 直接吞掉；
+#   - WM_SETTEXT / WM_SETICON 交给 DefWindowProc 时临时摘掉 WS_VISIBLE，
+#     文字/图标照常设进去，但系统没法借机重画标题栏。
+WM_SETTEXT = 0x000C
+WM_SETICON = 0x0080
+WM_NCPAINT = 0x0085
+WM_NCUAHDRAWCAPTION = 0x00AE
+WM_NCUAHDRAWFRAME = 0x00AF
+WS_VISIBLE = 0x10000000
+SUPPRESSED_NC_PAINT = frozenset({WM_NCPAINT, WM_NCUAHDRAWCAPTION, WM_NCUAHDRAWFRAME})
+REDRAW_LOCKED = frozenset({WM_SETTEXT, WM_SETICON})
+
+
+def def_window_proc_without_redraw(hwnd: int, msg: int, wparam: int, lparam: int) -> int:
+    """临时摘掉 WS_VISIBLE 再调 DefWindowProc：状态照改，系统不画老式标题栏。"""
+    u = ctypes.windll.user32
+    h = ctypes.c_void_p(hwnd)
+    style = u.GetWindowLongW(h, GWL_STYLE) & 0xFFFFFFFF
+    visible = bool(style & WS_VISIBLE)
+    if visible:
+        u.SetWindowLongW(h, GWL_STYLE, ctypes.c_int(style & ~WS_VISIBLE & 0xFFFFFFFF).value)
+    try:
+        return def_window_proc(hwnd, msg, wparam, lparam)
+    finally:
+        if visible:
+            cur = u.GetWindowLongW(h, GWL_STYLE) & 0xFFFFFFFF
+            u.SetWindowLongW(h, GWL_STYLE, ctypes.c_int(cur | WS_VISIBLE).value)
 
 
 def frame_thickness(hwnd: int) -> tuple:

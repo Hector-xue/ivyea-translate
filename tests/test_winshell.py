@@ -25,10 +25,12 @@ def test_describe_event_filters_noise():
 
 
 def test_native_chrome_style_adds_system_bits_keeps_popup():
-    style = ws.native_chrome_style(0x80000000)
-    for bit in (ws.WS_CAPTION, ws.WS_THICKFRAME, ws.WS_SYSMENU, ws.WS_MINIMIZEBOX, ws.WS_MAXIMIZEBOX):
+    style = ws.native_chrome_style(0x80000000 | ws.WS_CAPTION)
+    for bit in (ws.WS_THICKFRAME, ws.WS_SYSMENU, ws.WS_MINIMIZEBOX, ws.WS_MAXIMIZEBOX):
         assert style & bit == bit
     assert style & 0x80000000
+    # 带 WS_CAPTION 系统会在失焦/缩放时往窗口上画老式标题栏（v0.37.2 拖动缩放出现"一圈窗口"）
+    assert style & ws.WS_CAPTION == 0
 
 
 def test_maximized_inset_only_when_zoomed():
@@ -87,3 +89,21 @@ def test_stylechanging_strips_layered_only_for_exstyle():
                                                  ctypes.addressof(other))
     assert other.styleNew == ws.WS_EX_LAYERED
     assert not ws.strip_layered_on_stylechanging(ws.WM_SIZE, gwl_exstyle, addr)
+
+
+def test_hit_test_edges_maps_bands_to_resize_codes():
+    """缩放交给系统：抓边带报 HT* 码（Qt startSystemResize 在原生外壳下会卡住/画出老式边框）。"""
+    rect = (100, 100, 900, 700)
+    band = 16
+    assert ws.hit_test_edges(500, 400, rect, band) == ws.HTCLIENT
+    assert ws.hit_test_edges(105, 400, rect, band) == ws.HTLEFT
+    assert ws.hit_test_edges(890, 400, rect, band) == ws.HTRIGHT
+    assert ws.hit_test_edges(500, 110, rect, band) == ws.HTTOP
+    assert ws.hit_test_edges(500, 690, rect, band) == ws.HTBOTTOM
+    assert ws.hit_test_edges(101, 101, rect, band) == ws.HTTOPLEFT
+    assert ws.hit_test_edges(899, 101, rect, band) == ws.HTTOPRIGHT
+    assert ws.hit_test_edges(101, 699, rect, band) == ws.HTBOTTOMLEFT
+    assert ws.hit_test_edges(899, 699, rect, band) == ws.HTBOTTOMRIGHT
+    # 带宽边界：恰好在带外是客户区
+    assert ws.hit_test_edges(116, 400, rect, band) == ws.HTCLIENT
+    assert ws.hit_test_edges(883, 400, rect, band) == ws.HTCLIENT
