@@ -1699,9 +1699,9 @@ class MainWindow(ShellWindowMixin, QMainWindow):
             try:
                 from . import winshell
 
-                msg, wparam, lparam = winshell.read_msg(message)
-                if self._native_chrome:
-                    hwnd = int(self.winId())
+                # hwnd 取自消息本身，别调 winId()（建窗期间会无限递归，见 read_msg）
+                hwnd, msg, wparam, lparam = winshell.read_msg(message)
+                if self._native_chrome and hwnd:
                     if msg == winshell.WM_NCCALCSIZE:
                         return True, winshell.handle_nccalcsize(hwnd, wparam, lparam)
                     if msg == winshell.WM_NCHITTEST:
@@ -1717,7 +1717,7 @@ class MainWindow(ShellWindowMixin, QMainWindow):
                     self._last_size_kind = wparam
                 if text:
                     qt_min = bool(self.windowState() & Qt.WindowMinimized)
-                    iconic = winshell.is_iconic(int(self.winId()))
+                    iconic = winshell.is_iconic(hwnd)
                     log.info("窗口事件：%s | Qt最小化=%s 原生图标态=%s 可见=%s 激活=%s",
                              text, qt_min, iconic, self.isVisible(), self.isActiveWindow())
                     if winshell.should_resync(msg, wparam, qt_min, iconic):

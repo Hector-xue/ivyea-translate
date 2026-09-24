@@ -53,3 +53,20 @@ def test_handle_nccalcsize_shrinks_rect_when_zoomed(monkeypatch):
     rc2 = ws._RECT(-8, -8, 1928, 1088)
     assert ws.handle_nccalcsize(1, 0, ctypes.addressof(rc2)) == 0
     assert (rc2.left, rc2.top) == (-8, -8)
+
+
+def test_read_msg_returns_hwnd_from_the_message_itself():
+    """nativeEvent 必须从 MSG 里取 hwnd：建窗期间调 winId() 会无限递归致进程崩溃（v0.36/0.37）。"""
+    import ctypes
+
+    m = ws._MSG(hwnd=0x1234, message=ws.WM_NCCALCSIZE, wParam=1, lParam=0x5678)
+    assert ws.read_msg(ctypes.addressof(m)) == (0x1234, ws.WM_NCCALCSIZE, 1, 0x5678)
+
+
+def test_native_event_never_calls_winid():
+    import inspect
+
+    from ivyea_translate.ui.main_window import MainWindow
+
+    code = [ln.split("#")[0] for ln in inspect.getsource(MainWindow.nativeEvent).splitlines()]
+    assert not any("winId(" in ln for ln in code)

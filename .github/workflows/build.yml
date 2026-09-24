@@ -70,7 +70,22 @@ jobs:
           Start-Sleep -Seconds 20
           if ($p.HasExited) { throw "installed exe exited early, code=$($p.ExitCode)" }
           Stop-Process -Id $p.Id -Force
-          Write-Host "installed app smoke OK"
+          Write-Host "installed app smoke OK (offscreen)"
+          # 再用真实窗口平台跑一次：offscreen 不走原生窗口消息，v0.36/0.37 的
+          # nativeEvent 无限递归崩溃在 offscreen 下完全测不出来。要求活着且主窗真的可见。
+          Remove-Item Env:QT_QPA_PLATFORM
+          $env:IVYEA_TRANSLATE_HOME = "$env:RUNNER_TEMP\ivyea-smoke3"
+          $p = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 20
+          if ($p.HasExited) {
+            Get-WinEvent -FilterHashtable @{LogName='Application'; ProviderName='Application Error'} -MaxEvents 1 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.Message }
+            throw "installed exe crashed with real window platform, code=$($p.ExitCode)"
+          }
+          $p.Refresh()
+          if (-not $p.MainWindowTitle) { throw "no visible main window after 20s (process alive but window never shown)" }
+          Write-Host "visible window: $($p.MainWindowTitle)"
+          Stop-Process -Id $p.Id -Force
+          Write-Host "installed app smoke OK (real window)"
       - uses: actions/upload-artifact@v4
         with:
           name: IvyeaTranslate-win64

@@ -63,9 +63,14 @@ class _MSG(ctypes.Structure):
 
 
 def read_msg(message) -> tuple:
-    """PySide 的 nativeEvent 给的是 VoidPtr：按 MSG 结构读出 (msg, wParam, lParam)。"""
+    """PySide 的 nativeEvent 给的是 VoidPtr：按 MSG 结构读出 (hwnd, msg, wParam, lParam)。
+
+    hwnd 必须从消息里取，**nativeEvent 里绝不能调 self.winId()**：窗口创建期间
+    （CreateWindowEx 内部）系统就同步发 WM_NCCALCSIZE 等消息进来，此时 Qt 还没登记
+    句柄，winId() 会再次触发建窗 → 又发消息 → 又进 nativeEvent，无限递归直到栈溢出，
+    进程以 0xC000041D 静默崩溃（v0.36.0/v0.37.0 双击无反应的根因）。"""
     m = _MSG.from_address(int(message))
-    return int(m.message), int(m.wParam), int(m.lParam)
+    return int(m.hwnd or 0), int(m.message), int(m.wParam), int(m.lParam)
 
 
 def log_style(hwnd: int, tag: str) -> None:
