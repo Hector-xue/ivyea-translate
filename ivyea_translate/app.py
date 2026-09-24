@@ -150,6 +150,8 @@ class TranslateApp(QApplication):
         act_quit.triggered.connect(self.request_quit)
         menu.addAction(act_quit)
         self.tray.setContextMenu(menu)
+        self._pending_update = None
+        self.tray.messageClicked.connect(self._on_tray_message_clicked)
         self.tray.activated.connect(
             lambda reason: self.show_main_window()
             if reason == QSystemTrayIcon.ActivationReason.Trigger
@@ -460,29 +462,35 @@ class TranslateApp(QApplication):
 
     # ---------- 首次引导 ----------
 
+    def _sheet(self, title, body, buttons, dismissible=True):
+        """在主窗里弹一张提示卡（替代系统消息框，见 ui/sheet.py）。"""
+        from .ui.sheet import Sheet
+
+        return Sheet.show_on(self.window.shell, title, body, buttons, dismissible)
+
     def _maybe_onboard(self) -> None:
         if self.cfg.get("onboarded", False):
             return
         self.cfg.set("onboarded", True)
         self.cfg.save()
-        from PySide6.QtWidgets import QMessageBox
-
         from .platform_ui import double_copy_label, pretty_hotkey
+        from .ui.sheet import body_label, shortcut_list
 
-        box = QMessageBox(self.window)
-        box.setWindowTitle("欢迎使用 Ivyea Translate")
-        box.setIcon(QMessageBox.Information)
-        box.setText(
-            "三步上手：\n\n"
-            f"1. 选中任意文字，按 {double_copy_label()}（连按两下 C）—— 立即翻译\n"
-            f"2. 按 {pretty_hotkey(self.cfg.get('hotkeys.screenshot_translate', ''))} "
-            "框选屏幕 —— 截图翻译（弹窗显示译文）\n"
-            f"3. 按 {pretty_hotkey(self.cfg.get('hotkeys.screenshot_inplace', ''))} "
-            "框选屏幕 —— 原位翻译（译文直接盖在原文上，工具条可复制/看原文，Esc 关闭）\n"
-            "4. 免配置即用（内置免费翻译）；到「设置」填自己的大模型可解锁风格与邮件助手\n\n"
-            "程序常驻托盘，点托盘图标可随时打开本窗口。"
-        )
-        box.exec()
+        from PySide6.QtWidgets import QVBoxLayout, QWidget
+
+        body = QWidget()
+        col = QVBoxLayout(body)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(22)
+        col.addWidget(shortcut_list([
+            (double_copy_label(), "划词翻译", "选中文字，连按两下 C"),
+            (pretty_hotkey(self.cfg.get("hotkeys.screenshot_translate", "")),
+             "截图翻译", "框选屏幕，弹窗显示译文"),
+            (pretty_hotkey(self.cfg.get("hotkeys.screenshot_inplace", "")),
+             "原位翻译", "译文直接盖在原文上"),
+        ]))
+        col.addWidget(body_label("内置免费翻译，开箱即用；关掉窗口后在托盘常驻。", muted=True))
+        self._sheet("欢迎使用 Ivyea Translate", body, [("ok", "开始使用", "primary")])
 
     # ---------- 更新 ----------
 
@@ -497,70 +505,96 @@ class TranslateApp(QApplication):
 
     def _on_update_found(self, feed: dict) -> None:
         self.window.show_update_available(feed)  # 设置页也留一个入口
-        # 同一版本只主动弹一次，避免每次启动打扰
+        # 同一版本只主动提示一次，避免每次启动打扰
         if str(feed.get("version")) == str(self.cfg.get("update.prompted_version", "")):
             return
         self.cfg.set("update.prompted_version", feed.get("version", ""))
         self.cfg.save()
-        from PySide6.QtWidgets import QMessageBox
+        if not self.window.isVisible() and self.tray is not None:
+            # 主窗在托盘里：别为了提示更新把窗口弹出来，托盘气泡点一下再打开
+            self._pending_update = feed
+            self.tray.showMessage("Ivyea Translate", f"新版本 v{feed['version']} 可用，点此更新",
+                                  QSystemTrayIcon.Information, 8000)
+            return
+        self._prompt_update(feed)
 
-        box = QMessageBox(self.window)
-        box.setWindowTitle("发现新版本")
-        box.setIcon(QMessageBox.Information)
+    def _on_tray_message_clicked(self) -> None:
+        feed = getattr(self, "_pending_update", None)
+        self._pending_update = None
+        if feed:
+            self.show_main_window()
+            self._prompt_update(feed)
+
+    def _prompt_update(self, feed: dict) -> None:
+        from .ui.sheet import body_label
+
+        from PySide6.QtWidgets import QVBoxLayout, QWidget
+
+        body = QWidget()
+        col = QVBoxLayout(body)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(10)
+        col.addWidget(body_label("自动下载安装，完成后重启，设置与历史都会保留。"))
         notes = (feed.get("notes") or "").strip()
-        text = (f"Ivyea Translate v{feed['version']} 可用。\n\n"
-                "点「立即更新」将自动下载并安装，完成后自动重启——无需手动去官网下载。")
         if notes:
-            text += f"\n\n更新内容：\n{notes[:280]}"
-        box.setText(text)
-        now_btn = box.addButton("立即更新", QMessageBox.AcceptRole)
-        box.addButton("以后", QMessageBox.RejectRole)
-        box.exec()
-        if box.clickedButton() is now_btn:
-            self._start_update(feed)
+            col.addWidget(body_label(notes[:280], muted=True))
+        sheet = self._sheet(f"新版本 v{feed['version']}", body,
+                            [("later", "以后", "ghost"), ("now", "立即更新", "primary")])
+        sheet.finished.connect(lambda key: key == "now" and self._start_update(feed))
 
     def _start_update(self, feed: dict) -> None:
         """一键更新：下载(进度条)→静默安装→自动重启。非安装版引导到官网。"""
         from PySide6.QtGui import QDesktopServices
         from PySide6.QtCore import QUrl
-        from PySide6.QtWidgets import QMessageBox, QProgressDialog
+        from .ui.sheet import progress_body
         from .updater import UpdateDownloader, apply_update_and_quit, is_installed_copy
 
+        page = feed.get("page_url", "https://translate.ivyea.com/")
         if not is_installed_copy():
-            QMessageBox.information(
-                self.window, "更新",
-                "当前安装方式无法自替换，请到官网下载新版覆盖使用。")
-            QDesktopServices.openUrl(QUrl(feed.get("page_url", "https://translate.ivyea.com/")))
+            sheet = self._sheet("请到官网下载新版",
+                                "当前是免安装版，没法自己替换自己；下载新版覆盖即可。",
+                                [("later", "取消", "ghost"), ("open", "打开官网", "primary")])
+            sheet.finished.connect(
+                lambda key: key == "open" and QDesktopServices.openUrl(QUrl(page)))
             return
 
-        dlg = QProgressDialog("正在下载新版本…", "取消", 0, 100, self.window)
-        dlg.setWindowTitle("更新 Ivyea Translate")
-        dlg.setMinimumWidth(380)
-        dlg.setAutoClose(False)
-        dlg.setAutoReset(False)
+        self.show_main_window()   # 进度卡在主窗里，从托盘触发时也要看得见
+        body, bar, note = progress_body()
+        note.setText("正在下载…")
+        sheet = self._sheet(f"更新到 v{feed['version']}", body,
+                            [("cancel", "取消", "ghost")], dismissible=False)
         self._upd_cancelled = False
-        dlg.canceled.connect(lambda: setattr(self, "_upd_cancelled", True))
+        sheet.finished.connect(lambda key: key == "cancel" and setattr(self, "_upd_cancelled", True))
 
         dl = UpdateDownloader(feed["setup_url"], feed["version"], parent=self)
         self._update_dl = dl
-        dl.progress.connect(dlg.setValue)
+
+        def progress(v):
+            bar.setValue(v)
+            note.setText(f"正在下载… {v}%")
+
+        dl.progress.connect(progress)
 
         def done(path):
             if self._upd_cancelled:
                 return
-            dlg.setLabelText("下载完成，正在安装并重启…")
-            dlg.setValue(100)
+            bar.setValue(100)
+            note.setText("下载完成，正在安装并重启…")
+            sheet.set_buttons([])
             apply_update_and_quit(path, self.request_quit)
 
         def failed(msg):
-            dlg.close()
-            if not self._upd_cancelled:
-                QMessageBox.warning(self.window, "更新失败", f"{msg}\n可稍后重试，或到官网手动下载。")
+            if self._upd_cancelled:
+                return
+            sheet.close_with("failed")
+            retry = self._sheet("更新没有完成", f"{msg}\n可以稍后重试，或到官网下载新版。",
+                                [("site", "打开官网", "ghost"), ("retry", "重试", "primary")])
+            retry.finished.connect(lambda key: self._start_update(feed) if key == "retry"
+                                   else key == "site" and QDesktopServices.openUrl(QUrl(page)))
 
         dl.finished_ok.connect(done)
         dl.failed.connect(failed)
         dl.start()
-        dlg.show()
 
     # ---------- 退出 ----------
 

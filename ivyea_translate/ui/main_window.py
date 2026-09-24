@@ -270,7 +270,7 @@ class MainWindow(ShellWindowMixin, QMainWindow):
         if self._frameless:
             self.setMouseTracking(True)  # 贴边时光标变缩放箭头
         if self._native_chrome:
-            # 先建原生窗口再补系统样式（WS_CAPTION|WS_THICKFRAME）+ DWM 投影圆角；
+            # 先建原生窗口再补系统样式（WS_CAPTION|WS_THICKFRAME）、摘掉分层、开 DWM 按像素 alpha 合成；
             # 之后 WM_NCCALCSIZE 由 nativeEvent 接管，把非客户区算成 0
             from . import winshell
 
@@ -1702,6 +1702,9 @@ class MainWindow(ShellWindowMixin, QMainWindow):
                 # hwnd 取自消息本身，别调 winId()（建窗期间会无限递归，见 read_msg）
                 hwnd, msg, wparam, lparam = winshell.read_msg(message)
                 if self._native_chrome and hwnd:
+                    # Qt 会在改透明度/flags 时把 WS_EX_LAYERED 加回来，生效前摘掉
+                    if winshell.strip_layered_on_stylechanging(msg, wparam, lparam):
+                        return False, 0
                     if msg == winshell.WM_NCCALCSIZE:
                         return True, winshell.handle_nccalcsize(hwnd, wparam, lparam)
                     if msg == winshell.WM_NCHITTEST:

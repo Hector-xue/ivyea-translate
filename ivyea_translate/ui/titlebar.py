@@ -23,9 +23,10 @@ macOS 不走无边框：红绿灯按钮是 Mac 用户的肌肉记忆，去掉反
 
 Windows（v0.36.0 起）走"原生外壳"：Qt 层仍是 Frameless，但原生窗口保留
 WS_CAPTION|WS_THICKFRAME 等系统样式、在 WM_NCCALCSIZE 里把非客户区算成 0，
-不再用 WA_TranslucentBackground 的分层窗口。用户对照实验证明分层无边框窗在外壳下
-会"显示桌面后跟着还原、按钮点不动"，普通窗口不会。代价：投影/圆角交给 DWM
-（Win11 圆角 8px，Win10 直角），上面那圈自绘投影留白在 Windows 上收掉。
+且不是分层窗口。用户对照实验证明分层无边框窗在外壳下会"显示桌面后跟着还原、
+按钮点不动"，普通窗口不会。v0.36/v0.37 曾把圆角投影交给 DWM，结果 Win10 上是
+直角（DWM 只在 Win11 画圆角）；v0.37.2 起改为非分层 + DWM 按像素 alpha 合成，
+圆角与投影仍是这里自绘的，Win10/Win11 一致。
 """
 from __future__ import annotations
 
@@ -44,7 +45,6 @@ TITLEBAR_HEIGHT = 38
 SHADOW_MARGIN = 12   # 窗体四周留给投影的透明留白（同时是抓边缩放带）
 SHADOW_OFFSET = 3    # 投影下沉，模拟光从上方来
 RESIZE_BAND = SHADOW_MARGIN + 4
-NATIVE_RESIZE_BAND = 6   # 原生外壳模式：没有留白，抓边带只留系统边框的宽度
 
 
 def apply_frameless(win, native_frame: bool = False) -> bool:
@@ -67,11 +67,11 @@ def apply_frameless(win, native_frame: bool = False) -> bool:
         | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint
     )
     if WINDOWS:
-        # Windows 走"原生外壳"：不做分层透明窗，系统样式 + WM_NCCALCSIZE 去边框，
-        # 圆角投影交给 DWM（见 winshell.install_native_chrome）。用户对照实验证明
-        # 分层无边框窗口在外壳下会"显示桌面后跟着还原、按钮点不动"，普通窗口不会。
+        # Windows 走"原生外壳"：系统样式 + WM_NCCALCSIZE 去边框，且**不做分层窗口**
+        # （用户对照实验证明分层无边框窗在外壳下会"显示桌面后跟着还原、按钮点不动"）。
+        # 透明底照样开：Qt 因此用 ARGB 位图作 backing store，winshell 摘掉 WS_EX_LAYERED
+        # 并让 DWM 按像素 alpha 合成，圆角与投影仍是自绘的（见 winshell.install_native_chrome）
         win._native_chrome = True
-        return True
     win.setAttribute(Qt.WA_TranslucentBackground)
     return True
 
@@ -225,12 +225,16 @@ class ShellWindowMixin:
     """无边框窗口的窗体绘制（圆角投影）与四边缩放。"""
 
     _frameless: bool = False
-    _native_chrome: bool = False   # Windows：投影/圆角由 DWM 画，自绘留白收掉
+    _native_chrome: bool = False   # Windows：非分层原生窗口 + DWM 按像素 alpha 合成
 
     # ---- 投影 ----
 
+    def _shell_rounded(self) -> bool:
+        """窗体画不画圆角：无边框且没最大化/全屏（贴满屏幕时四角会露出桌面）。"""
+        return self._frameless and not (self.isMaximized() or self.isFullScreen())
+
     def _shell_margin(self) -> int:
-        if not self._frameless or self._native_chrome or self.isMaximized():
+        if not self._shell_rounded():
             return 0
         return SHADOW_MARGIN
 
@@ -263,8 +267,7 @@ class ShellWindowMixin:
     def _edge_at(self, pos) -> Qt.Edges:
         if not self._frameless or self.isMaximized():
             return Qt.Edges()
-        # 原生外壳没有投影留白，抓边带压在内容边缘上，只留 6px（系统边框的手感）
-        band = NATIVE_RESIZE_BAND if self._native_chrome else RESIZE_BAND
+        band = RESIZE_BAND
         x, y, w, h = pos.x(), pos.y(), self.width(), self.height()
         edges = Qt.Edges()
         if x <= band:
@@ -323,15 +326,18 @@ class ShellWindowMixin:
         if shell is None or root_lay is None:
             return
         margin = self._shell_margin()
+        rounded = self._shell_rounded()
         root_lay.setContentsMargins(margin, margin, margin, margin)
         backdrop = getattr(self, "backdrop", None)
         if backdrop is not None:
-            # 最大化时窗体贴满屏幕、圆角切直角，背景照片的裁剪也要跟着切
-            backdrop.set_radius(theme.WINDOW_RADIUS if margin else 0)
+            # 最大化时窗体贴满屏幕、圆角切直角，背景照片的裁剪也要跟着切。
+            # 注意按"圆不圆"判断而不是"有没有留白"：v0.36/0.37 这里按留白判断，
+            # 原生外壳留白为 0 → 照片被切成直角，Win11 上靠 DWM 8px 圆角才没露馅
+            backdrop.set_radius(theme.WINDOW_RADIUS if rounded else 0)
         # 最大化时窗体贴满屏幕，圆角会在四角露出桌面 -> 切成直角。
         # 这里用内联样式而不是 QSS 属性选择器（[maximized="true"]）：动态属性在
         # PySide6 里回读不稳，实测选择器不命中，圆角切不掉。
         shell.setStyleSheet(
-            "QWidget#Shell { border-radius: 0; border: none; }" if not margin else ""
+            "QWidget#Shell { border-radius: 0; border: none; }" if not rounded else ""
         )
         self.update()

@@ -70,3 +70,20 @@ def test_native_event_never_calls_winid():
 
     code = [ln.split("#")[0] for ln in inspect.getsource(MainWindow.nativeEvent).splitlines()]
     assert not any("winId(" in ln for ln in code)
+
+
+def test_stylechanging_strips_layered_only_for_exstyle():
+    """Qt 改透明度/flags 时会把 WS_EX_LAYERED 加回来；分层窗口正是"显示桌面后冒出来、按钮点不动"的温床。"""
+    import ctypes
+
+    ss = ws._STYLESTRUCT(styleOld=0x100, styleNew=0x100 | ws.WS_EX_LAYERED)
+    addr = ctypes.addressof(ss)
+    gwl_exstyle = ws.GWL_EXSTYLE & 0xFFFFFFFF          # WPARAM 里是无符号的 -20
+    assert ws.strip_layered_on_stylechanging(ws.WM_STYLECHANGING, gwl_exstyle, addr)
+    assert ss.styleNew == 0x100
+    assert not ws.strip_layered_on_stylechanging(ws.WM_STYLECHANGING, gwl_exstyle, addr)  # 已干净
+    other = ws._STYLESTRUCT(styleOld=0, styleNew=ws.WS_EX_LAYERED)
+    assert not ws.strip_layered_on_stylechanging(ws.WM_STYLECHANGING, ws.GWL_STYLE & 0xFFFFFFFF,
+                                                 ctypes.addressof(other))
+    assert other.styleNew == ws.WS_EX_LAYERED
+    assert not ws.strip_layered_on_stylechanging(ws.WM_SIZE, gwl_exstyle, addr)

@@ -139,7 +139,6 @@ SM_CXSIZEFRAME = 32
 SM_CYSIZEFRAME = 33
 SM_CXPADDEDBORDER = 92
 DWMWA_WINDOW_CORNER_PREFERENCE = 33
-DWMWCP_ROUND = 2
 
 
 def native_chrome_style(style: int) -> int:
@@ -169,8 +168,45 @@ class _RECT(ctypes.Structure):
                 ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
 
 
+WS_EX_LAYERED = 0x00080000
+WM_STYLECHANGING = 0x007C
+DWMWA_NCRENDERING_POLICY = 2
+DWMNCRP_DISABLED = 1
+DWMWCP_DONOTROUND = 1
+DWMWA_BORDER_COLOR = 34
+DWMWA_COLOR_NONE = 0xFFFFFFFE
+
+
+class _STYLESTRUCT(ctypes.Structure):
+    _fields_ = [("styleOld", ctypes.c_uint), ("styleNew", ctypes.c_uint)]
+
+
+def strip_layered_on_stylechanging(msg: int, wparam: int, lparam: int) -> bool:
+    """WM_STYLECHANGING(GWL_EXSTYLE)：把 Qt 想加回来的 WS_EX_LAYERED 摘掉。返回是否改过。
+
+    WA_TranslucentBackground + Frameless 在 Qt 眼里就该是分层窗口，建窗、改透明度、
+    改 flags 时都会重新加 WS_EX_LAYERED；这里在样式真正生效前拦下，窗口永远是普通窗。
+    """
+    if msg != WM_STYLECHANGING or ctypes.c_int(wparam & 0xFFFFFFFF).value != GWL_EXSTYLE or not lparam:
+        return False
+    ss = _STYLESTRUCT.from_address(lparam)
+    if ss.styleNew & WS_EX_LAYERED:
+        ss.styleNew &= ~WS_EX_LAYERED & 0xFFFFFFFF
+        return True
+    return False
+
+
 def install_native_chrome(hwnd: int) -> bool:
-    """给 Qt 建好的无边框窗口补上系统窗口样式 + DWM 投影/圆角。失败返回 False（保持原样）。"""
+    """给 Qt 建好的无边框窗口补上系统窗口样式，并让它"非分层也能透明"。失败返回 False。
+
+    圆角与投影都是我们自己画的（和 v0.35 之前一模一样的外观），但窗口不再是分层窗口：
+    - 摘掉 WS_EX_LAYERED：Qt 的 backing store 看到非分层就改用 BitBlt 把 ARGB 预乘位图
+      画进窗口（qwindowsbackingstore.cpp flush），不再走 UpdateLayeredWindow；
+    - DwmExtendFrameIntoClientArea(-1)：整个客户区都算"玻璃"，DWM 合成时按像素 alpha
+      混合——四角与投影留白的透明像素真的透出桌面，Win10/Win11 行为一致；
+    - 关掉 DWM 的非客户区渲染：不要系统投影/Win11 圆角/描边，外观全由自绘负责，
+      否则会叠出一圈方形系统投影、或 8px 系统圆角在 14px 自绘圆角外划出一道弧线。
+    """
     if not _WINDOWS or not hwnd:
         return False
     try:
@@ -178,16 +214,19 @@ def install_native_chrome(hwnd: int) -> bool:
         h = ctypes.c_void_p(hwnd)
         style = u.GetWindowLongW(h, GWL_STYLE) & 0xFFFFFFFF
         u.SetWindowLongW(h, GWL_STYLE, ctypes.c_int(native_chrome_style(style) & 0xFFFFFFFF).value)
-        # 让 DWM 认为窗口"有边框"：往客户区延伸 1px 边框，投影与 Win11 圆角就会出现，
-        # 而 1px 会被我们自己的内容盖住
+        ex = u.GetWindowLongW(h, GWL_EXSTYLE) & 0xFFFFFFFF
+        if ex & WS_EX_LAYERED:
+            u.SetWindowLongW(h, GWL_EXSTYLE, ctypes.c_int(ex & ~WS_EX_LAYERED & 0xFFFFFFFF).value)
         try:
             dwm = ctypes.windll.dwmapi
-            dwm.DwmExtendFrameIntoClientArea(h, ctypes.byref(_MARGINS(1, 1, 1, 1)))
-            pref = ctypes.c_int(DWMWCP_ROUND)
-            dwm.DwmSetWindowAttribute(h, DWMWA_WINDOW_CORNER_PREFERENCE,
-                                      ctypes.byref(pref), ctypes.sizeof(pref))
+            dwm.DwmExtendFrameIntoClientArea(h, ctypes.byref(_MARGINS(-1, -1, -1, -1)))
+            for attr, val in ((DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND),
+                              (DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE),
+                              (DWMWA_NCRENDERING_POLICY, DWMNCRP_DISABLED)):
+                v = ctypes.c_uint(val)
+                dwm.DwmSetWindowAttribute(h, attr, ctypes.byref(v), ctypes.sizeof(v))
         except Exception as e:
-            log.info("DWM 投影/圆角设置失败（不影响使用）：%s", e)
+            log.info("DWM 透明合成设置失败（不影响使用）：%s", e)
         # SWP_FRAMECHANGED 触发一次 WM_NCCALCSIZE(TRUE)，Qt 会据此把边框留白记成 0
         u.SetWindowPos(h, None, 0, 0, 0, 0,
                        SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)

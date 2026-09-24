@@ -176,3 +176,20 @@ def test_native_frame_option_disables_frameless(qapp, tmp_path):
     assert win.titlebar.min_btn is None
     win.really_quit = True
     win.close()
+
+
+def test_shell_stays_rounded_with_margin_until_maximized(qapp, tmp_path):
+    """v0.36/0.37 在 Windows 上把"无留白"当成"不圆角"，Win10 上窗口成了直角。
+    圆角与投影留白只在最大化/全屏时收掉。"""
+    from ivyea_translate.ui import theme
+    from ivyea_translate.ui.titlebar import SHADOW_MARGIN
+
+    win = _make_window(qapp, tmp_path)
+    if not win._frameless:
+        pytest.skip("macOS 原生窗口")
+    win._native_chrome = True          # 模拟 Windows 原生外壳
+    win.show()
+    win._sync_shell_state()
+    assert win._shell_rounded() and win._shell_margin() == SHADOW_MARGIN
+    assert win.backdrop._radius == theme.WINDOW_RADIUS
+    assert win.testAttribute(Qt.WA_TranslucentBackground)

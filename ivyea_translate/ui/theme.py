@@ -681,4 +681,10 @@ QToolTip {{
     border-radius: 7px;
     padding: 4px 8px;
 }}
-"""
+""" + _sheet_qss()
+
+
+def _sheet_qss() -> str:
+    from .sheet import sheet_qss   # sheet 依赖 theme 的令牌，延迟导入避免循环
+
+    return sheet_qss()
