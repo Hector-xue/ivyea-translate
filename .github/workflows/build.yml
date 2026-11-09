@@ -100,7 +100,7 @@ jobs:
   # 热键/取词/截图/权限弹窗必须在真机人工验证（见 README 的 macOS 清单）
   build-macos:
     needs: test
-    runs-on: macos-14  # Apple Silicon(arm64)
+    runs-on: macos-15  # Apple Silicon(arm64)；macos-14 已被 GitHub 下线（2026-11 起 job 秒取消）
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
