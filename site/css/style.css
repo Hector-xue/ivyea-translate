@@ -116,6 +116,12 @@ header.nav nav a.gh {
   border: 1px solid rgba(107, 165, 63, 0.4);
   padding: 6px 14px; border-radius: 999px;
 }
+/* 个人业务入口（2026-11-09）：跟 ivyea.com 主站「帮公司接 AI」同一个去处，实心按钮比 GitHub 更醒目 */
+header.nav nav a.biz {
+  padding: 6px 14px; border-radius: 999px; white-space: nowrap;
+  background: var(--accent-deep); color: #fff; font-weight: 600;
+}
+header.nav nav a.biz:hover { color: #fff; filter: brightness(1.08); }
 
 /* ---------- Hero ---------- */
 .hero {
@@ -364,6 +370,7 @@ footer a:hover { color: var(--accent-deep); }
   header.nav nav { gap: 14px; }
   header.nav nav a { font-size: 13px; }
   header.nav nav a.gh { padding: 5px 12px; }
+  header.nav nav a.biz { padding: 5px 12px; }
 
   .hero { padding: 0 22px 48px; }
   .hero h1 { letter-spacing: 0; font-size: clamp(38px, 11vw, 54px); }
@@ -397,6 +404,11 @@ footer a:hover { color: var(--accent-deep); }
 }
 
 @media (max-width: 420px) {
-  header.nav nav a:not(.gh) { display: none; }  /* 极窄屏只留 GitHub 按钮 */
+  header.nav nav a:not(.gh):not(.biz) { display: none; }  /* 极窄屏只留 GitHub 按钮 */
   .stage { flex: 1 1 44%; }
+}
+
+/* 多了「帮公司接 AI」后顶栏放不下文字链接：600 以下只留两个按钮（原先 420 以下才这样） */
+@media (max-width: 600px) {
+  header.nav nav a:not(.gh):not(.biz) { display: none; }
 }
